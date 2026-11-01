@@ -1,5 +1,5 @@
 metal = get_option('metal')
-metal_dep = dependency('appleframeworks', modules: ['Metal', 'Foundation'],
+metal_dep = dependency('appleframeworks', modules: ['Metal', 'Foundation', 'IOSurface'],
                        required: metal)
 metal = metal.require(metal_dep.found(),
                       error_message: 'Metal requires the Metal framework')

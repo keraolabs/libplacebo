@@ -18,7 +18,9 @@ foreach t : tests
   endif
   env = {}
   if t == 'metal.c'
-    sources += 'metal_pass.c'
+    sources += ['metal_pass.c', 'metal_interop.c']
+    deps += dependency('appleframeworks',
+                       modules: ['CoreFoundation', 'CoreVideo', 'IOSurface'])
     if host_machine.subsystem() == 'ios'
       sources += 'metal_app.m'
       deps += dependency('appleframeworks', modules: ['UIKit'])

@@ -211,8 +211,9 @@ struct pl_shared_mem {
     size_t stride_w;
     size_t stride_h;
 
-    // When importing a `pl_tex` of type PL_HANDLE_MTL_TEX, this determines
-    // which plane is imported (0 - 2).
+    // When importing a `pl_tex` of type PL_HANDLE_MTL_TEX or
+    // PL_HANDLE_IOSURFACE, this determines which plane is imported (0 - 2).
+    // An IOSurface without planes is imported as plane 0.
     unsigned plane;
 };
 

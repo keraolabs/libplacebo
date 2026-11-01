@@ -214,6 +214,7 @@ pl_gpu pl_gpu_create_metal(pl_log log, pl_metal mtl, id<MTLDevice> device,
     gpu->log = log;
     gpu->glsl = metal_glsl();
     gpu->limits = metal_limits(device, caps);
+    gpu->import_caps.tex = PL_HANDLE_IOSURFACE;
     metal_setup_formats(gpu);
     if (!metal_pass_init(gpu)) {
         metal_gpu_destroy(gpu);
