@@ -1,9 +1,21 @@
+import dataclasses
 import re
 from pathlib import Path
 
-from common import PKGCONFIG_DIR, ROOT, BuildError, Library, Slice, build_env, stream
+import deps
+from common import (
+    PKGCONFIG_DIR,
+    ROOT,
+    BuildError,
+    Check,
+    Library,
+    Slice,
+    build_env,
+    stream,
+)
+from deps import Dep
 from ffmpeg import FFmpeg, compile_args
-from toolchain import meson_native_file
+from toolchain import meson_machine_file, meson_machine_option
 
 MESON_OPTIONS = (
     "--auto-features=disabled",
@@ -15,9 +27,20 @@ MESON_OPTIONS = (
 )
 TEST_OPTIONS = ("-Dtests=true",)
 HEADERPAD = "-Wl,-headerpad_max_install_names"
-NATIVE_FILE = "native.ini"
+MACHINE_FILE = "machine.ini"
 DYLIB = re.compile(r"libplacebo\.[0-9]+\.dylib")
 NOTICE = "LICENSE"
+METAL_TEST_PROGRAM = Path("src") / "tests" / "test.metal.c"
+
+
+@dataclasses.dataclass(frozen=True)
+class TestBuild:
+    """A build with TEST_OPTIONS; its programs load libglslang.dylib from
+    deps_prefix/lib."""
+
+    checks: list[Check]
+    build_dir: Path
+    deps_prefix: Path
 
 
 def build_libplacebo(
@@ -32,9 +55,9 @@ def build_libplacebo(
     """Configure and compile this checkout for slice_ against the deps installed
     under deps_prefix; returns the meson build directory."""
     work.mkdir(parents=True, exist_ok=True)
-    native = work / NATIVE_FILE
-    native.write_text(
-        meson_native_file(
+    machine = work / MACHINE_FILE
+    machine.write_text(
+        meson_machine_file(
             slice_,
             sdk_path,
             deps_prefix / PKGCONFIG_DIR,
@@ -47,7 +70,8 @@ def build_libplacebo(
     stream(
         [
             *("meson", "setup", str(build_dir), str(ROOT)),
-            *("--native-file", str(native), f"--prefix={work / 'prefix'}"),
+            *meson_machine_option(slice_, machine),
+            f"--prefix={work / 'prefix'}",
             *options,
         ],
         f"meson setup of {what}",
@@ -79,3 +103,28 @@ def install_libplacebo(build_dir: Path, prefix: Path) -> Library:
             f"expected one libplacebo.<soversion>.dylib in {lib}, found {len(found)}"
         )
     return Library(dylib=found[0], headers=prefix / "include" / "libplacebo")
+
+
+def build_tests(
+    slice_: Slice,
+    sdk_path: Path,
+    checkouts: dict[Dep, Path],
+    ffmpeg: FFmpeg,
+    work: Path,
+    link_args: list[str],
+) -> TestBuild:
+    """Build the deps and this checkout with TEST_OPTIONS for slice_ under work."""
+    deps_prefix = work / "deps"
+    checks = deps.build_deps(
+        slice_, sdk_path, checkouts, work / "deps-build", deps_prefix
+    )
+    build_dir = build_libplacebo(
+        slice_,
+        sdk_path,
+        deps_prefix,
+        ffmpeg,
+        work / "libplacebo",
+        MESON_OPTIONS + TEST_OPTIONS,
+        link_args,
+    )
+    return TestBuild(checks=checks, build_dir=build_dir, deps_prefix=deps_prefix)

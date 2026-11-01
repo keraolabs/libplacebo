@@ -22,7 +22,7 @@ SOURCE = KERAO / "consumer.c"
 PREFIX = "kerao-consumer"
 NV12_PLANES = "2"
 RUN_TIMEOUT_SECONDS = 60
-DYLD_PREFIX = "DYLD_"
+DYLD_PREFIXES = ("DYLD_", "SIMCTL_CHILD_DYLD_")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -69,24 +69,33 @@ def parse(stdout: str) -> dict[str, str]:
     return lines
 
 
-def run_consumer(binary: Path) -> Run:
-    """Run binary with no DYLD_* variable in its environment."""
+def run_consumer(binary: Path, launcher: tuple[str, ...] = ()) -> Run:
+    """Run binary through the launcher command prefix, with no DYLD_* variable in
+    its environment and none that simctl would pass on as one."""
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(DYLD_PREFIX)
+        if not key.startswith(DYLD_PREFIXES)
     }
     try:
-        stdout = capture([str(binary)], env=env, timeout_seconds=RUN_TIMEOUT_SECONDS)
+        stdout = capture(
+            [*launcher, str(binary)], env=env, timeout_seconds=RUN_TIMEOUT_SECONDS
+        )
     except BuildError as error:
         return Run({}, str(error))
     return Run(parse(stdout))
 
 
 def delivered_consumer_run(
-    output: Path, ffmpeg: FFmpeg, slice_: Slice, sdk_path: Path, work: Path
+    output: Path,
+    ffmpeg: FFmpeg,
+    slice_: Slice,
+    sdk_path: Path,
+    work: Path,
+    launcher: tuple[str, ...],
 ) -> Run:
-    """Build SOURCE against the delivered slice_ and the FFmpeg frameworks, and run it."""
+    """Build SOURCE against the delivered slice_ and the FFmpeg frameworks, and run
+    it through the launcher command prefix."""
     framework_dirs = [
         *(delivered_framework(output, slice_, name).parent for name in FRAMEWORKS),
         *(slice_dir(ffmpeg, slice_, name) for name in ffmpeg.libraries),
@@ -102,7 +111,7 @@ def delivered_consumer_run(
         )
     except BuildError as error:
         return Run({}, str(error))
-    return run_consumer(binary)
+    return run_consumer(binary, launcher)
 
 
 def failure(run: Run, key: str) -> str | None:

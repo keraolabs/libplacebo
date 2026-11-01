@@ -170,8 +170,9 @@ def check_artifact_deps(path: Path) -> Check:
 
 
 def check_artifact_inputs(path: Path) -> Check:
-    """inputs must name the FFmpeg artifact by tag, commit, mode and binary
-    hashes, and a release may only use release inputs."""
+    """inputs must name the FFmpeg artifact by tag, commit, mode and the hash of
+    each framework's binary for every slice, and a release may only use release
+    inputs."""
     record = json.loads(path.read_text())
     entries = record.get("inputs", [])
     problems = [] if len(entries) == 1 else [f"{len(entries)} inputs, expected 1"]
@@ -181,12 +182,17 @@ def check_artifact_inputs(path: Path) -> Check:
             for field in ffmpeg.INPUT_FIELDS
             if not entry.get(field)
         ]
-        problems += [
-            f"input {framework.get('name')} {binary.get('identifier')} has no sha256"
-            for framework in entry.get("frameworks", [])
-            for binary in framework.get("slices", [])
-            if not binary.get("sha256")
-        ]
+        for framework in entry.get("frameworks", []):
+            hashed = {
+                binary.get("identifier")
+                for binary in framework.get("slices", [])
+                if binary.get("sha256")
+            }
+            problems += [
+                f"input {framework.get('name')} has no {slice_.identifier} sha256"
+                for slice_ in SLICES
+                if slice_.identifier not in hashed
+            ]
         if record.get("mode") == "release" and entry.get("mode") != "release":
             problems.append(f"release uses a {entry.get('mode')} input")
     return Check(
@@ -264,4 +270,16 @@ def artifact_dep_without_commit(tmp: Path) -> tuple[Check, Check]:
 def release_artifact_with_dev_input(tmp: Path) -> tuple[Check, Check]:
     good = written(tmp / "good.json", fake_artifact_record(tmp / "release"))
     bad = written(tmp / "bad.json", fake_artifact_record(tmp / "dev", "dev"))
+    return check_artifact_inputs(good), check_artifact_inputs(bad)
+
+
+@counterexample
+def artifact_input_without_a_slice(tmp: Path) -> tuple[Check, Check]:
+    record = fake_artifact_record(tmp)
+    good = written(tmp / "good.json", record)
+    (entry,) = record["inputs"]
+    first, *rest = entry["frameworks"]
+    without_slice = {**first, "slices": first["slices"][1:]}
+    bad_entry = {**entry, "frameworks": [without_slice, *rest]}
+    bad = written(tmp / "bad.json", {**record, "inputs": [bad_entry]})
     return check_artifact_inputs(good), check_artifact_inputs(bad)

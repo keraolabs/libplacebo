@@ -8,6 +8,7 @@ from checkout import UPSTREAM_VERSION
 from common import (
     FRAMEWORKS,
     HEADER_DIRS,
+    IOS,
     MACOS,
     Check,
     Library,
@@ -83,7 +84,12 @@ def xcode_number(version: str) -> str:
 
 
 def platform_keys(slice_: Slice) -> dict[str, object]:
-    return {slice_.minimum_version_key: slice_.floor}
+    keys: dict[str, object] = {slice_.minimum_version_key: slice_.floor}
+    if slice_.device_families:
+        keys["UIDeviceFamily"] = list(slice_.device_families)
+    if slice_.required_capabilities:
+        keys["UIRequiredDeviceCapabilities"] = list(slice_.required_capabilities)
+    return keys
 
 
 def info_plist(
@@ -376,6 +382,19 @@ def info_plist_without_minimum_version(tmp: Path) -> tuple[Check, Check]:
     with framework_plist(bad, MACOS.layout).open("wb") as file:
         plistlib.dump(plist, file)
     return good, check_info_plist(bad, MACOS, "1")
+
+
+@counterexample
+def ios_info_plist_without_device_family(tmp: Path) -> tuple[Check, Check]:
+    framework = fake_frameworks(tmp, IOS)["libplacebo"]
+    good = check_info_plist(framework, IOS, "1")
+    bad = copy_framework(framework, tmp / "bad")
+    with framework_plist(bad, IOS.layout).open("rb") as file:
+        plist = plistlib.load(file)
+    del plist["UIDeviceFamily"]
+    with framework_plist(bad, IOS.layout).open("wb") as file:
+        plistlib.dump(plist, file)
+    return good, check_info_plist(bad, IOS, "1")
 
 
 @counterexample

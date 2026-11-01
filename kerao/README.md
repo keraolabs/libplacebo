@@ -58,6 +58,7 @@ The fork has no CI: the Metal device of GitHub-hosted macOS runners is "Apple Pa
   ```
 
   Without them meson would take Jinja from the host or build without fast_float, so both scripts refuse to start.
+- A booted iOS Simulator running iOS 17.0 or newer, for the build's consumer program. `xcrun simctl list devices available` lists them and `xcrun simctl boot <udid>` boots one. Without one the build stops before it starts; the test script does not need it.
 - Network access to the two repositories under [Dependencies](#dependencies).
 - The output directory of the FFmpeg fork's `kerao/build.py` for the pinned FFmpeg tag, `n9.0.2-kerao.1` (commit `ae49c6ac4a2409553ca0f9a00f9e252cbce632a0`). The scripts link against it and never build FFmpeg themselves.
 
@@ -91,7 +92,11 @@ In both modes the FFmpeg output's `tag` and `commit` must equal the pins in `ker
 
 ```text
 <dir>/
+  libplacebo.xcframework/ios-arm64/libplacebo.framework
+  libplacebo.xcframework/ios-arm64-simulator/libplacebo.framework
   libplacebo.xcframework/macos-arm64/libplacebo.framework
+  libglslang.xcframework/ios-arm64/libglslang.framework
+  libglslang.xcframework/ios-arm64-simulator/libglslang.framework
   libglslang.xcframework/macos-arm64/libglslang.framework
   include/libplacebo/…
   include/glslang/…
@@ -102,11 +107,19 @@ In both modes the FFmpeg output's `tag` and `commit` must equal the pins in `ker
   notices/SPIRV-Cross/LicenseRef-KhronosFreeUse.txt
 ```
 
-The slice `macos-arm64` is built for `arm64-apple-macos14.0` only. Each framework uses the versioned macOS layout: the binary is `Versions/A/<name>`, whose install name is `@rpath/<name>.framework/Versions/A/<name>`, and whose only `LC_RPATH` is `@loader_path/../../..`, the directory holding the frameworks. Libraries are linked with `-Wl,-headerpad_max_install_names`, install names are rewritten after linking, and nothing is signed. libplacebo loads `libglslang`, `libavutil` and `libavcodec` through `@rpath`, so an app embeds all of them, and `libswresample`, which `libavcodec` loads, next to each other.
+Each xcframework has three slices, all arm64 only and none x86_64:
 
-`Resources/` holds an `Info.plist` with the keys of Xcode's framework template, `CFBundleShortVersionString` `7.387.0` and `LSMinimumSystemVersion` `14.0`, and a `PrivacyInfo.xcprivacy` generated from the library's record in `kerao/required-reason-api/`. Neither library calls an API of Apple's required-reason list, which the build checks against the binaries' imported symbols and Objective-C selectors.
+| Slice | Target | Layout | Install name | Only `LC_RPATH` |
+| --- | --- | --- | --- | --- |
+| `ios-arm64` | `arm64-apple-ios17.0` | flat | `@rpath/<name>.framework/<name>` | `@loader_path/..` |
+| `ios-arm64-simulator` | `arm64-apple-ios17.0-simulator` | flat | `@rpath/<name>.framework/<name>` | `@loader_path/..` |
+| `macos-arm64` | `arm64-apple-macos14.0` | `Versions/A` | `@rpath/<name>.framework/Versions/A/<name>` | `@loader_path/../../..` |
 
-`Headers/` holds the library's public headers, libplacebo's with the `config.h` meson generates. `include/` holds the same trees for bindgen. The build checks that both are identical byte for byte across slices.
+The rpath is the directory holding the frameworks. Libraries are linked with `-Wl,-headerpad_max_install_names`, install names are rewritten after linking, and nothing is signed. libplacebo loads `libglslang`, `libavutil` and `libavcodec` through `@rpath`, so an app embeds all of them, and `libswresample`, which `libavcodec` loads, next to each other.
+
+Each framework has an `Info.plist` with the keys of Xcode's framework template, `CFBundleShortVersionString` `7.387.0` and the slice's minimum OS: `MinimumOSVersion` `17.0` with `UIDeviceFamily` `[1, 2]` on iOS, plus `UIRequiredDeviceCapabilities` `[arm64]` on the device slice, and `LSMinimumSystemVersion` `14.0` on macOS. Next to it is a `PrivacyInfo.xcprivacy` generated from the library's record in `kerao/required-reason-api/`; both sit at the framework's root in the flat layout and in `Resources/` on macOS. Neither library calls an API of Apple's required-reason list, which the build checks against the binaries' imported symbols and Objective-C selectors.
+
+`Headers/` holds the library's public headers, libplacebo's with the `config.h` meson generates. `include/` holds the same trees for bindgen. The build checks that the three slices' headers and `include/` are identical byte for byte.
 
 `notices/` holds the license texts of libplacebo (LGPL-2.1), glslang and SPIRV-Cross. libplacebo takes SPIRV-Cross under MIT, and the Khronos headers it compiles carry the notice in `LicenseRef-KhronosFreeUse.txt`.
 
@@ -118,10 +131,10 @@ The slice `macos-arm64` is built for `arm64-apple-macos14.0` only. Each framewor
 | `repository` | `https://github.com/keraolabs/libplacebo` |
 | `tag` | the release tag, or `git describe --tags --always` in dev mode |
 | `commit`, `mode`, `dirty`, `built_at` | the checkout's commit, `release` or `dev`, whether the worktree had changes, UTC build time |
-| `xcode_build`, `sdks` | Xcode's build version, and each slice's SDK name and version |
+| `xcode_build`, `sdks` | Xcode's build version, and each of the three slices' SDK name and version |
 | `tools` | meson, ninja, CMake and pkg-config versions |
 | `deps` | glslang and SPIRV-Cross: name, repository, tag, commit |
-| `inputs` | the FFmpeg output's repository, tag, commit, mode and binaries with their SHA-256 |
+| `inputs` | the FFmpeg output's repository, tag, commit, mode and binaries with their SHA-256, for every framework and each of the three slices |
 | `frameworks` | each framework's slices: identifier, path of the binary relative to `<dir>`, SHA-256 |
 | `configure` | each slice's meson arguments |
 | `unverified` | checks the build skipped; always empty |
@@ -134,21 +147,23 @@ Each slice builds the [dependencies](#dependencies), then configures libplacebo 
 --auto-features=disabled -Dmetal=enabled -Dglslang=enabled -Ddovi=enabled -Dlibdovi=disabled -Ddemos=false
 ```
 
-and a native file the script writes. Its `c`, `cpp` and `objc` compilers are `xcrun --sdk macosx clang` with `-target arm64-apple-macos14.0` and `--sysroot` set to the SDK `xcrun` reports, its compile arguments find FFmpeg's `include/` and the `libavutil` and `libavcodec` frameworks of the slice, and its `pkg_config_libdir` holds only the dependencies, so meson never finds a package of the host.
+and a machine file the script writes: a native file for `macos-arm64`, a cross file for each iOS slice, whose `[host_machine]` is `darwin` on `aarch64` with subsystem `ios` or `ios-simulator`. Its `c`, `cpp` and `objc` compilers are `xcrun --sdk <sdk> clang` (`iphoneos`, `iphonesimulator` or `macosx`) with the slice's `-target` and `--sysroot` set to the SDK `xcrun` reports, its compile arguments find FFmpeg's `include/` and the `libavutil` and `libavcodec` frameworks of the slice, and its `pkg_config_libdir` holds only the dependencies, so meson never finds a package of the host.
 
 After packaging, the build checks each framework binary: platform and minimum OS of `LC_BUILD_VERSION`, arm64 only, install name, the single `LC_RPATH`, and that every `LC_LOAD_DYLIB` is a delivered framework, an FFmpeg framework or a system library. It checks that libplacebo exports only symbols its public headers declare `PL_API`, all 35 `PL_LIBAV_API` functions of `utils/libav.h` among them. Upstream's headers for D3D11 and Vulkan declare a few symbols that a build without those backends does not export; that is not a failure.
 
-Last, the build compiles `kerao/consumer.c` against the delivered macOS slice and the FFmpeg frameworks, with one `-rpath` per framework directory, and runs it without any `DYLD_*` variable. The program prints `pl_version()` and the plane count `pl_plane_data_from_pixfmt()` gives for NV12, which must match the mode's version and 2.
+Last, the build compiles `kerao/consumer.c` against the delivered `macos-arm64` and `ios-arm64-simulator` slices and the FFmpeg frameworks of the same slice, with one `-rpath` per framework directory. The macOS program runs directly, the Simulator program in the booted Simulator through `xcrun simctl spawn`, both without any `DYLD_*` variable reaching them. The program prints `pl_version()` and the plane count `pl_plane_data_from_pixfmt()` gives for NV12, which must match the mode's version and 2. It creates no `pl_gpu`: the Metal backend compiles and links for the Simulator, but is not meant to run there.
 
 ### Test
 
-`kerao/test.py` builds the macOS slice the same way with `-Dtests=true` added, links the test programs with an `LC_RPATH` per FFmpeg framework directory, and runs `meson test` on this Mac. Its summary has one line per test, then one per Metal configuration.
+`kerao/test.py` builds the `macos-arm64` and `ios-arm64` slices the same way with `-Dtests=true` added. It links the macOS test programs with an `LC_RPATH` per FFmpeg framework directory and runs `meson test` on this Mac. Its summary has one line per test, then one per Metal configuration.
+
+For `ios-arm64` it checks the Metal test program, `src/tests/test.metal.c`: built for iOS 17.0, arm64 only, and loading nothing but system libraries, `@rpath/libglslang.dylib` and FFmpeg frameworks. It links libplacebo's objects statically, so an app running it embeds `libglslang.dylib` and the FFmpeg frameworks `libavutil`, `libavcodec` and `libswresample`, but no `libplacebo.framework`. The script does not run it.
 
 The Metal test, `src/tests/metal.c`, runs with `MTL_DEBUG_LAYER=1` and creates two `pl_gpu`s on the same device in one run: one with the device's own capabilities and one capped to Apple5. It prints `kerao-metal-test config <name> Apple<family>` after every test of a configuration has passed, and `kerao-metal-test end <count>` as its last line. A configuration passes only when its line is there and the end line follows with the right count. An FFmpeg output of either mode is accepted.
 
 ### Self-test
 
-`--self-test` runs each check against counterexamples without building anything. Every counterexample gives a check an input it must pass and a broken copy it must fail, such as a framework with a second `LC_RPATH`, an altered install name, a library missing a `PL_LIBAV_API` export, an `Info.plist` with another version, or a `config.h` that differs in one slice. It needs Xcode, CMake and ninja, but no network, and takes a few seconds.
+`--self-test` runs each check against counterexamples without building anything. Every counterexample gives a check an input it must pass and a broken copy it must fail, such as a framework with a second `LC_RPATH`, an altered install name, a library missing a `PL_LIBAV_API` export, an `Info.plist` with another version, or a `config.h` that differs in one slice. It needs Xcode, CMake and ninja, but no network or Simulator, and takes a few seconds.
 
 A check is a `check_*` function in `kerao/`, and the self-test also fails when no counterexample calls one. A new check therefore comes with a counterexample registered through `@counterexample`.
 
@@ -163,7 +178,7 @@ Each build clones the pinned tags into a temporary directory and stops if a chec
 
 glslang 16.6.0 is glslang's newest release, and it is the glslang of Vulkan SDK 1.4.363.0. SPIRV-Cross has no releases of its own: Khronos tags the revision it ships in each Vulkan SDK, and `vulkan-sdk-1.4.363.0` is that revision for the same SDK, so the two were released and tested together.
 
-Both are built with CMake and Ninja in Release for each slice.
+Both are built with CMake and Ninja in Release for each slice, with `CMAKE_SYSTEM_NAME` `iOS` for the two iOS slices and `Darwin` for macOS, and the slice's `-target` in the compiler flags.
 
 #### glslang
 

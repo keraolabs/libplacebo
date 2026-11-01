@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run libplacebo's tests, Metal included, on this Mac.
+"""Run libplacebo's tests, Metal included, on this Mac, and build them for the iPhone.
 
 python3 kerao/test.py --ffmpeg-artifacts DIR
 """
@@ -22,13 +22,21 @@ from pathlib import Path
 import checkout
 import deps
 import ffmpeg
+import glslang
 import libplacebo
 import suite
-from common import MACOS, ROOT, BuildError, Check, capture, print_summary, scoped
+from common import IOS, MACOS, ROOT, BuildError, Check, capture, print_summary, scoped
 from deps import DEPS
+from framework import bundled
+from macho import (
+    check_architectures,
+    check_build_version,
+    check_dependencies,
+    read_macho,
+)
 from toolchain import Toolchain, read_toolchain
 
-TEST_SLICES = (MACOS,)
+TEST_SLICES = (MACOS, IOS)
 TEST_MODE = "dev"
 
 
@@ -70,6 +78,24 @@ def summary_facts(
     ]
 
 
+def device_test_checks(
+    build: libplacebo.TestBuild, ffmpeg_input: ffmpeg.FFmpeg
+) -> list[Check]:
+    """The Metal test program of the IOS build must run on iOS arm64 and load
+    only system libraries, libglslang.dylib and FFmpeg frameworks."""
+    program = build.build_dir / libplacebo.METAL_TEST_PROGRAM
+    macho = read_macho(program)
+    embedded = frozenset(
+        {glslang.INSTALL_NAME, *bundled(IOS.layout, ffmpeg_input.libraries)}
+    )
+    checks = (
+        check_build_version(macho.builds, IOS.platform, IOS.floor),
+        check_architectures(macho.archs),
+        check_dependencies(macho, embedded),
+    )
+    return [scoped(f"{IOS.identifier} {program.name}", check) for check in checks]
+
+
 def test(ffmpeg_root: Path) -> int:
     source = checkout.read_source(ROOT)
     ffmpeg_input = ffmpeg.read_ffmpeg(ffmpeg_root)
@@ -91,26 +117,26 @@ def test(ffmpeg_root: Path) -> int:
             print_summary(facts, checks)
             print("not tested: a dependency is not at its pinned commit")
             return 1
-        for slice_ in TEST_SLICES:
-            sdk_path = toolchain.sdks[slice_.identifier].path
-            slice_work = work / slice_.identifier
-            deps_prefix = slice_work / "deps"
-            checks += deps.build_deps(
-                slice_, sdk_path, checkouts, slice_work / "deps-build", deps_prefix
-            )
-            build_dir = libplacebo.build_libplacebo(
+        builds = {
+            slice_: libplacebo.build_tests(
                 slice_,
-                sdk_path,
-                deps_prefix,
+                toolchain.sdks[slice_.identifier].path,
+                checkouts,
                 ffmpeg_input,
-                slice_work / "libplacebo",
-                libplacebo.MESON_OPTIONS + libplacebo.TEST_OPTIONS,
-                ffmpeg.rpath_args(ffmpeg_input, slice_),
+                work / slice_.identifier,
+                ffmpeg.rpath_args(ffmpeg_input, slice_) if slice_ == MACOS else [],
             )
-            checks += [
-                scoped(slice_.identifier, check)
-                for check in suite.suite_checks(suite.run_meson_tests(build_dir))
-            ]
+            for slice_ in TEST_SLICES
+        }
+        for build in builds.values():
+            checks += build.checks
+        checks += [
+            scoped(MACOS.identifier, check)
+            for check in suite.suite_checks(
+                suite.run_meson_tests(builds[MACOS].build_dir)
+            )
+        ]
+        checks += device_test_checks(builds[IOS], ffmpeg_input)
     print_summary(facts, checks)
     return 0 if all(check.ok for check in checks) else 1
 

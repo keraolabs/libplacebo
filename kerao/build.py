@@ -34,11 +34,13 @@ import framework
 import glslang
 import libplacebo
 import privacy
+import simulator
 import xcframework
 from common import (
     COUNTEREXAMPLES,
     FRAMEWORKS,
     HEADER_DIRS,
+    IOS_SIMULATOR,
     KERAO,
     MACOS,
     ROOT,
@@ -57,7 +59,6 @@ from toolchain import Toolchain, read_toolchain
 CHECK_PREFIX = "check_"
 NOTICES_DIR = "notices"
 ARTIFACT_JSON = "artifact.json"
-CONSUMER_SLICES = (MACOS,)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -146,16 +147,19 @@ def consumer_checks(
     ffmpeg_input: ffmpeg.FFmpeg,
     toolchain: Toolchain,
     expected_version: str,
+    launchers: dict[Slice, tuple[str, ...]],
 ) -> list[Check]:
+    """launchers maps each slice the consumer runs on to its command prefix."""
     checks = []
     with tempfile.TemporaryDirectory(prefix="kerao-consumer-") as tmp:
-        for slice_ in CONSUMER_SLICES:
+        for slice_, launcher in launchers.items():
             run = consumer.delivered_consumer_run(
                 output,
                 ffmpeg_input,
                 slice_,
                 toolchain.sdks[slice_.identifier].path,
                 Path(tmp) / slice_.identifier,
+                launcher,
             )
             checks += [
                 scoped(slice_.identifier, check)
@@ -233,10 +237,12 @@ def build(output: Path, mode: str, ffmpeg_root: Path) -> int:
     source = checkout.read_source(ROOT)
     ffmpeg_input = ffmpeg.read_ffmpeg(ffmpeg_root)
     toolchain = read_toolchain()
+    simulators = simulator.read_booted_simulators()
     facts = summary_facts(mode, source, toolchain, ffmpeg_input, output)
     checks = [
         *checkout.preconditions(source, mode),
         *ffmpeg.preconditions(ffmpeg_input, mode),
+        simulator.check_booted_simulator(simulators),
     ]
     if not all(check.ok for check in checks):
         print_summary(facts, checks)
@@ -277,7 +283,11 @@ def build(output: Path, mode: str, ffmpeg_root: Path) -> int:
         copy_notices(checkouts, output / NOTICES_DIR)
     checks += delivered_checks(output, records, bundle_version, ffmpeg_input)
     checks += consumer_checks(
-        output, ffmpeg_input, toolchain, checkout.expected_pl_version(source, mode)
+        output,
+        ffmpeg_input,
+        toolchain,
+        checkout.expected_pl_version(source, mode),
+        {MACOS: (), IOS_SIMULATOR: simulator.spawn_command(simulators[0])},
     )
     checks += artifact_checks(output, mode, source, toolchain, ffmpeg_input)
     print_summary(facts, checks)

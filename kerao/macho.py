@@ -2,7 +2,17 @@ import dataclasses
 import re
 from pathlib import Path
 
-from common import ARCHS, MACOS, Check, capture, counterexample, listed
+from common import (
+    ARCHS,
+    IOS,
+    IOS_SIMULATOR,
+    MACOS,
+    Check,
+    Slice,
+    capture,
+    counterexample,
+    listed,
+)
 from toolchain import tool
 
 DYLIB_COMMANDS = frozenset(
@@ -174,14 +184,18 @@ def check_object_build_versions(
 
 
 def fake_object(
-    directory: Path, name: str, code: str, flags: tuple[str, ...]
+    directory: Path,
+    name: str,
+    code: str,
+    flags: tuple[str, ...],
+    slice_: Slice = MACOS,
 ) -> Path:
-    """C++ code compiled with flags into directory/name.o."""
+    """C++ code compiled with flags and the SDK of slice_ into directory/name.o."""
     directory.mkdir(parents=True, exist_ok=True)
     source = directory / f"{name}.cc"
     source.write_text(code)
     target = source.with_suffix(".o")
-    capture([*tool(MACOS, "clang++"), *flags, "-c", "-o", str(target), str(source)])
+    capture([*tool(slice_, "clang++"), *flags, "-c", "-o", str(target), str(source)])
     return target
 
 
@@ -192,15 +206,19 @@ def fake_archive(directory: Path, name: str, objects: list[Path]) -> Path:
 
 
 def fake_dylib(
-    directory: Path, name: str, code: str, flags: tuple[str, ...] = TARGETED
+    directory: Path,
+    name: str,
+    code: str,
+    flags: tuple[str, ...] = TARGETED,
+    slice_: Slice = MACOS,
 ) -> Path:
-    """C++ code linked with flags into directory/libname.dylib."""
+    """C++ code linked with flags and the SDK of slice_ into directory/libname.dylib."""
     dylib = directory / f"lib{name}.dylib"
     capture(
         [
-            *tool(MACOS, "clang++"),
+            *tool(slice_, "clang++"),
             *(*flags, "-dynamiclib", "-o", str(dylib)),
-            str(fake_object(directory, name, code, flags)),
+            str(fake_object(directory, name, code, flags, slice_)),
         ]
     )
     return dylib
@@ -259,3 +277,16 @@ def binary_with_x86_64_slice(tmp: Path) -> tuple[Check, Check]:
             ),
         ),
     )
+
+
+@counterexample
+def simulator_binary_built_for_device(tmp: Path) -> tuple[Check, Check]:
+    def build_version(name: str, slice_: Slice) -> Check:
+        dylib = fake_dylib(
+            tmp / name, "fake", FAKE_FUNCTION, ("-target", slice_.target), slice_
+        )
+        return check_build_version(
+            read_build_versions(dylib), IOS_SIMULATOR.platform, IOS_SIMULATOR.floor
+        )
+
+    return build_version("good", IOS_SIMULATOR), build_version("bad", IOS)

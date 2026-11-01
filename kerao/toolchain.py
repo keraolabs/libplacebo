@@ -2,12 +2,23 @@ import dataclasses
 import re
 from pathlib import Path
 
-from common import MACOS, SLICES, BuildError, Slice, build_env, capture, stream
+from common import (
+    IOS,
+    IOS_SIMULATOR,
+    MACOS,
+    SLICES,
+    BuildError,
+    Slice,
+    build_env,
+    capture,
+    stream,
+)
 
 TOOLS = ("meson", "ninja", "cmake", "pkg-config")
 CMAKE_VERSION_PREFIX = "cmake version "
-CMAKE_SYSTEMS = {MACOS: "Darwin"}
+CMAKE_SYSTEMS = {IOS: "iOS", IOS_SIMULATOR: "iOS", MACOS: "Darwin"}
 CMAKE_PROCESSOR = "arm64"
+MESON_SUBSYSTEMS = {IOS: "ios", IOS_SIMULATOR: "ios-simulator", MACOS: "macos"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -95,14 +106,27 @@ def meson_literal(values: list[str]) -> str:
     return "[" + ", ".join(f"'{value}'" for value in quoted) + "]"
 
 
-def meson_native_file(
+def host_machine(slice_: Slice) -> str:
+    return f"""
+[host_machine]
+system = 'darwin'
+subsystem = '{MESON_SUBSYSTEMS[slice_]}'
+kernel = 'xnu'
+cpu_family = 'aarch64'
+cpu = 'aarch64'
+endian = 'little'
+"""
+
+
+def meson_machine_file(
     slice_: Slice,
     sdk_path: Path,
     pkgconfig_dir: Path,
     compile_args: list[str],
     link_args: list[str],
 ) -> str:
-    """A native file compiling for slice_ that finds packages only in pkgconfig_dir."""
+    """A machine file compiling for slice_ that finds packages only in
+    pkgconfig_dir: a cross file when slice_ is cross compiled, else a native file."""
     return f"""\
 [binaries]
 c = {meson_literal(compiler(slice_, sdk_path, "clang"))}
@@ -110,6 +134,7 @@ cpp = {meson_literal(compiler(slice_, sdk_path, "clang++"))}
 objc = {meson_literal(compiler(slice_, sdk_path, "clang"))}
 ar = {meson_literal(tool(slice_, "ar"))}
 strip = {meson_literal(tool(slice_, "strip"))}
+pkg-config = {meson_literal(["pkg-config"])}
 
 [built-in options]
 c_args = {meson_literal(compile_args)}
@@ -121,7 +146,14 @@ objc_link_args = {meson_literal(link_args)}
 
 [properties]
 pkg_config_libdir = {meson_literal([str(pkgconfig_dir)])}
-"""
+needs_exe_wrapper = {"true" if slice_.cross_compile else "false"}
+{host_machine(slice_) if slice_.cross_compile else ""}"""
+
+
+def meson_machine_option(slice_: Slice, machine_file: Path) -> list[str]:
+    """The meson setup option that reads machine_file for slice_."""
+    kind = "--cross-file" if slice_.cross_compile else "--native-file"
+    return [kind, str(machine_file)]
 
 
 def cmake_build(
@@ -181,7 +213,7 @@ FAKE_TOOLCHAIN = Toolchain(
     xcode_version="27.0",
     xcode_build="27A266a",
     machine_build="27A5339a",
-    sdks={MACOS.identifier: fake_sdk(MACOS.sdk, "27A5339a")},
+    sdks={slice_.identifier: fake_sdk(slice_.sdk, "27A5339a") for slice_ in SLICES},
     tools={
         "meson": "1.11.1",
         "ninja": "1.13.2",

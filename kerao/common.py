@@ -11,8 +11,11 @@ MAX_LISTED_LINES = 5
 PKGCONFIG_DIR = Path("lib") / "pkgconfig"
 
 PLATFORM_MACOS = 1
+PLATFORM_IOS = 2
+PLATFORM_IOS_SIMULATOR = 7
 
 ARCHS = ("arm64",)
+IOS_DEVICE_FAMILIES = (1, 2)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -29,6 +32,7 @@ VERSIONED = Layout(
     resources=Path("Versions") / "A" / "Resources",
     rpath="@loader_path/../../..",
 )
+FLAT = Layout(contents=Path(), resources=Path(), rpath="@loader_path/..")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -41,8 +45,36 @@ class Slice:
     bundle_platform: str
     minimum_version_key: str
     layout: Layout
+    cross_compile: bool
+    device_families: tuple[int, ...] = ()
+    required_capabilities: tuple[str, ...] = ()
 
 
+IOS = Slice(
+    identifier="ios-arm64",
+    sdk="iphoneos",
+    target="arm64-apple-ios17.0",
+    floor="17.0",
+    platform=PLATFORM_IOS,
+    bundle_platform="iPhoneOS",
+    minimum_version_key="MinimumOSVersion",
+    layout=FLAT,
+    cross_compile=True,
+    device_families=IOS_DEVICE_FAMILIES,
+    required_capabilities=ARCHS,
+)
+IOS_SIMULATOR = Slice(
+    identifier="ios-arm64-simulator",
+    sdk="iphonesimulator",
+    target="arm64-apple-ios17.0-simulator",
+    floor="17.0",
+    platform=PLATFORM_IOS_SIMULATOR,
+    bundle_platform="iPhoneSimulator",
+    minimum_version_key="MinimumOSVersion",
+    layout=FLAT,
+    cross_compile=True,
+    device_families=IOS_DEVICE_FAMILIES,
+)
 MACOS = Slice(
     identifier="macos-arm64",
     sdk="macosx",
@@ -52,8 +84,9 @@ MACOS = Slice(
     bundle_platform="MacOSX",
     minimum_version_key="LSMinimumSystemVersion",
     layout=VERSIONED,
+    cross_compile=False,
 )
-SLICES = (MACOS,)
+SLICES = (IOS, IOS_SIMULATOR, MACOS)
 
 FRAMEWORKS = ("libplacebo", "libglslang")
 HEADER_DIRS = {"libplacebo": "libplacebo", "libglslang": "glslang"}

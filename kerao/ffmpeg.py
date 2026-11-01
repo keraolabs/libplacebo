@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from common import MACOS, BuildError, Check, Slice, counterexample, listed
+from common import SLICES, BuildError, Check, Slice, counterexample, listed
 
 FFMPEG_TAG = "n9.0.2-kerao.1"
 FFMPEG_COMMIT = "ae49c6ac4a2409553ca0f9a00f9e252cbce632a0"
@@ -140,25 +140,23 @@ def inputs(ffmpeg: FFmpeg) -> list[dict]:
 
 
 def fake_ffmpeg(tmp: Path, **fields: object) -> FFmpeg:
-    """An FFmpeg output with one binary per framework, recorded at the pins."""
+    """An FFmpeg output with a binary per framework and slice, recorded at the pins."""
     root = tmp / "ffmpeg"
     frameworks = []
     for name in ("libavutil", "libavcodec", "libswresample"):
-        path = f"{name}.xcframework/{MACOS.identifier}/{name}.framework/{name}"
-        (root / path).parent.mkdir(parents=True)
-        (root / path).write_bytes(name.encode())
-        frameworks.append(
-            {
-                "name": name,
-                "slices": [
-                    {
-                        "identifier": MACOS.identifier,
-                        "path": path,
-                        "sha256": sha256(root / path),
-                    }
-                ],
-            }
-        )
+        slices = []
+        for slice_ in SLICES:
+            path = f"{name}.xcframework/{slice_.identifier}/{name}.framework/{name}"
+            (root / path).parent.mkdir(parents=True)
+            (root / path).write_bytes(f"{name} {slice_.identifier}".encode())
+            slices.append(
+                {
+                    "identifier": slice_.identifier,
+                    "path": path,
+                    "sha256": sha256(root / path),
+                }
+            )
+        frameworks.append({"name": name, "slices": slices})
     record = {
         "libraries": [framework["name"] for framework in frameworks],
         "repository": "https://github.com/keraolabs/FFmpeg",
