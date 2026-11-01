@@ -26,6 +26,11 @@ void gate_open(void *gate);
 // process. Needs MTL_DEBUG_LAYER=1 in the environment.
 int metal_tests(void);
 
+// Parameters of a raster pass with push constants, a uniform buffer, a
+// sampled texture and two vertex attributes
+struct pl_pass_params snapshot_pass_params(pl_gpu gpu);
+
 void metal_translation_tests(pl_gpu gpu);
+void metal_cache_tests(pl_metal mtl, int max_apple_family);
 void metal_snapshot_tests(pl_metal mtl);
 void metal_emulated_format_tests(pl_gpu gpu);

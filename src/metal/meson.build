@@ -15,6 +15,12 @@ components.set('metal', metal.allowed())
 if metal.allowed()
   add_project_arguments(build_opts + c_opts + ['-fobjc-arc'], language: 'objc')
   build_deps += [metal_dep, spirv_cross_dep]
+  conf_internal.set_quoted('PL_METAL_COMPILER', 'glslang @0@ @1@, SPIRV-Cross @2@ @3@'.format(
+    glslang.get_variable(pkgconfig: 'tag'),
+    glslang.get_variable(pkgconfig: 'commit'),
+    spirv_cross_dep.get_variable(pkgconfig: 'tag'),
+    spirv_cross_dep.get_variable(pkgconfig: 'commit'),
+  ))
   tests += 'metal.c'
   sources += [
     'metal/context.m',
@@ -24,6 +30,7 @@ if metal.allowed()
     'metal/gpu_buf.m',
     'metal/gpu_pass.m',
     'metal/gpu_tex.m',
+    'metal/msl.m',
   ]
 else
   sources += 'metal/stubs.c'

@@ -15,47 +15,10 @@
  * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <TargetConditionals.h>
-#include <spirv_cross_c.h>
-
 #include "formats.h"
-#include "../glsl/utils.h"
-
-// Highest MSL version of the OS floors, iOS 17 and macOS 14
-#define MSL_MAJOR 3
-#define MSL_MINOR 1
-#define MSL_LANGUAGE_VERSION MTLLanguageVersion3_1
-
-#if TARGET_OS_IPHONE
-#define MSL_PLATFORM SPVC_MSL_PLATFORM_IOS
-#else
-#define MSL_PLATFORM SPVC_MSL_PLATFORM_MACOS
-#endif
-
-// Argument table entries per shader stage, in every Apple GPU family
-#define MAX_BUFFERS  31
-#define MAX_TEXTURES 31
-#define MAX_SAMPLERS 16
-
-// Buffer argument table layout, the same in both stages
-#define VERTEX_BUFFER_INDEX 0
-#define PUSHC_BUFFER_INDEX  1
-#define FIRST_UBO_INDEX     2
 
 // Alignment of the structs MSL declares for push constant and uniform blocks
 #define MSL_STRUCT_ALIGN 16
-
-enum metal_stage_bits {
-    STAGE_VERTEX   = 1 << GLSL_SHADER_VERTEX,
-    STAGE_FRAGMENT = 1 << GLSL_SHADER_FRAGMENT,
-};
-
-// MSL argument table entries of a descriptor, and the stages using it
-struct metal_binding {
-    int index;   // buffer or texture index
-    int sampler; // sampler index of a sampled texture
-    enum metal_stage_bits stages;
-};
 
 struct pl_pass_mtl {
     id<MTLRenderPipelineState> pipeline;
@@ -63,31 +26,10 @@ struct pl_pass_mtl {
     enum metal_stage_bits pushc_stages;
 };
 
-// MSL translated from one shader stage
-struct metal_msl {
-    const char *source;
-    const char *entry;
-};
-
-static const char *stage_names[] = {
-    [GLSL_SHADER_VERTEX]   = "vertex",
-    [GLSL_SHADER_FRAGMENT] = "fragment",
-};
-
-static const SpvExecutionModel stage_models[] = {
-    [GLSL_SHADER_VERTEX]   = SpvExecutionModelVertex,
-    [GLSL_SHADER_FRAGMENT] = SpvExecutionModelFragment,
-};
-
 bool metal_pass_init(pl_gpu gpu)
 {
     struct pl_mtl *p = PL_PRIV(gpu);
-    uint32_t spirv_ver = PL_MIN(SPV_VERSION, PL_MAX_SPIRV_VER);
-    p->spirv = pl_spirv_create(gpu->log, (struct pl_spirv_version) {
-        .env_version = pl_spirv_version_to_vulkan(spirv_ver),
-        .spv_version = spirv_ver,
-    });
-    if (!p->spirv)
+    if (!metal_msl_init(gpu))
         return false;
 
     static const MTLSamplerMinMagFilter filters[PL_TEX_SAMPLE_MODE_COUNT] = {
@@ -123,183 +65,7 @@ void metal_pass_uninit(pl_gpu gpu)
         for (int a = 0; a < PL_TEX_ADDRESS_MODE_COUNT; a++)
             p->samplers[s][a] = nil;
     }
-    pl_spirv_destroy(&p->spirv);
-}
-
-static bool assign_bindings(pl_gpu gpu, struct pl_pass_t *pass)
-{
-    struct pl_pass_mtl *pass_mtl = PL_PRIV(pass);
-    const struct pl_pass_params *params = &pass->params;
-    int buffers = FIRST_UBO_INDEX, textures = 0, samplers = 0;
-
-    pass_mtl->bindings = pl_calloc_ptr(pass, params->num_descriptors, pass_mtl->bindings);
-    for (int i = 0; i < params->num_descriptors; i++) {
-        struct metal_binding *b = &pass_mtl->bindings[i];
-        switch (params->descriptors[i].type) {
-        case PL_DESC_BUF_UNIFORM:
-            b->index = buffers++;
-            break;
-        case PL_DESC_SAMPLED_TEX:
-            b->index = textures++;
-            b->sampler = samplers++;
-            break;
-        default:
-            PL_ERR(gpu, "Metal: descriptor '%s' has an unsupported type",
-                   params->descriptors[i].name);
-            return false;
-        }
-    }
-
-    if (buffers > MAX_BUFFERS || textures > MAX_TEXTURES || samplers > MAX_SAMPLERS) {
-        PL_ERR(gpu, "Metal: pass needs %d buffers, %d textures and %d samplers, "
-               "more than the limits of %d, %d and %d", buffers, textures,
-               samplers, MAX_BUFFERS, MAX_TEXTURES, MAX_SAMPLERS);
-        return false;
-    }
-
-    return true;
-}
-
-#define SC(cmd)                                                             \
-    do {                                                                    \
-        spvc_result res = (cmd);                                            \
-        if (res != SPVC_SUCCESS) {                                          \
-            PL_ERR(gpu, "Metal: %s: %s (%d)", #cmd,                         \
-                   spvc_context_get_last_error_string(sc), res);            \
-            goto error;                                                     \
-        }                                                                   \
-    } while (0)
-
-static spvc_result add_binding(spvc_compiler comp, SpvExecutionModel model,
-                               unsigned set, unsigned binding, unsigned buffer,
-                               unsigned texture, unsigned sampler)
-{
-    spvc_msl_resource_binding_2 b;
-    spvc_msl_resource_binding_init_2(&b);
-    b.stage = model;
-    b.desc_set = set;
-    b.binding = binding;
-    b.count = 1;
-    b.msl_buffer = buffer;
-    b.msl_texture = texture;
-    b.msl_sampler = sampler;
-    return spvc_compiler_msl_add_resource_binding_2(comp, &b);
-}
-
-// Maps every descriptor and the push constants to their argument table entries
-static bool add_bindings(pl_gpu gpu, pl_pass pass, spvc_context sc,
-                         spvc_compiler comp, SpvExecutionModel model)
-{
-    const struct pl_pass_mtl *pass_mtl = PL_PRIV(pass);
-    SC(add_binding(comp, model, SPVC_MSL_PUSH_CONSTANT_DESC_SET,
-                   SPVC_MSL_PUSH_CONSTANT_BINDING, PUSHC_BUFFER_INDEX, 0, 0));
-    for (int i = 0; i < pass->params.num_descriptors; i++) {
-        const struct metal_binding *b = &pass_mtl->bindings[i];
-        SC(add_binding(comp, model, 0, pass->params.descriptors[i].binding,
-                       b->index, b->index, b->sampler));
-    }
-    return true;
-
-error:
-    return false;
-}
-
-static void reflect_usage(pl_pass pass, spvc_compiler comp, enum glsl_shader_stage stage)
-{
-    struct pl_pass_mtl *pass_mtl = PL_PRIV(pass);
-    SpvExecutionModel model = stage_models[stage];
-    if (spvc_compiler_msl_is_resource_used(comp, model, SPVC_MSL_PUSH_CONSTANT_DESC_SET,
-                                           SPVC_MSL_PUSH_CONSTANT_BINDING))
-        pass_mtl->pushc_stages |= 1 << stage;
-    for (int i = 0; i < pass->params.num_descriptors; i++) {
-        unsigned binding = pass->params.descriptors[i].binding;
-        if (spvc_compiler_msl_is_resource_used(comp, model, 0, binding))
-            pass_mtl->bindings[i].stages |= 1 << stage;
-    }
-}
-
-static bool spirv_to_msl(pl_gpu gpu, pl_pass pass, void *alloc, pl_str spirv,
-                         enum glsl_shader_stage stage, struct metal_msl *out)
-{
-    SpvExecutionModel model = stage_models[stage];
-    spvc_context sc = NULL;
-    spvc_compiler comp;
-    spvc_parsed_ir ir;
-    spvc_compiler_options opts;
-    const char *msl = NULL;
-    bool ok = false;
-
-    PL_DEBUG(gpu, "Metal: translating %s shader SPIR-V to MSL %d.%d with SPIRV-Cross",
-             stage_names[stage], MSL_MAJOR, MSL_MINOR);
-    if (spvc_context_create(&sc) != SPVC_SUCCESS) {
-        PL_ERR(gpu, "Metal: failed creating a SPIRV-Cross context");
-        return false;
-    }
-
-    SC(spvc_context_parse_spirv(sc, (const SpvId *) spirv.buf,
-                                spirv.len / sizeof(SpvId), &ir));
-    SC(spvc_context_create_compiler(sc, SPVC_BACKEND_MSL, ir,
-                                    SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &comp));
-    SC(spvc_compiler_create_compiler_options(comp, &opts));
-    SC(spvc_compiler_options_set_uint(opts, SPVC_COMPILER_OPTION_MSL_VERSION,
-                                      SPVC_MAKE_MSL_VERSION(MSL_MAJOR, MSL_MINOR, 0)));
-    SC(spvc_compiler_options_set_uint(opts, SPVC_COMPILER_OPTION_MSL_PLATFORM,
-                                      MSL_PLATFORM));
-    SC(spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FLIP_VERTEX_Y,
-                                      stage == GLSL_SHADER_VERTEX));
-    SC(spvc_compiler_install_compiler_options(comp, opts));
-    if (!add_bindings(gpu, pass, sc, comp, model))
-        goto error;
-
-    SC(spvc_compiler_compile(comp, &msl));
-    reflect_usage(pass, comp, stage);
-    *out = (struct metal_msl) {
-        .source = pl_strdup0(alloc, pl_str0(msl)),
-        .entry = pl_strdup0(alloc, pl_str0(
-            spvc_compiler_get_cleansed_entry_point_name(comp, "main", model))),
-    };
-    ok = true;
-
-error:
-    spvc_context_destroy(sc);
-    return ok;
-}
-
-static bool translate(pl_gpu gpu, pl_pass pass, void *alloc,
-                      enum glsl_shader_stage stage, const char *glsl,
-                      struct metal_msl *out)
-{
-    struct pl_mtl *p = PL_PRIV(gpu);
-    PL_DEBUG(gpu, "Metal: compiling %s shader GLSL with glslang", stage_names[stage]);
-    pl_str spirv = pl_spirv_compile_glsl(p->spirv, alloc, gpu->glsl, stage, glsl);
-    if (!spirv.len)
-        return false;
-
-    return spirv_to_msl(gpu, pass, alloc, spirv, stage, out);
-}
-
-static id<MTLFunction> build_function(pl_gpu gpu, enum glsl_shader_stage stage,
-                                      struct metal_msl msl)
-{
-    struct pl_mtl *p = PL_PRIV(gpu);
-    MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
-    opts.languageVersion = MSL_LANGUAGE_VERSION;
-    opts.fastMathEnabled = NO;
-
-    NSError *error = nil;
-    id<MTLLibrary> lib = [p->device newLibraryWithSource:@(msl.source)
-                                                 options:opts
-                                                   error:&error];
-    id<MTLFunction> fn = [lib newFunctionWithName:@(msl.entry)];
-    int level = fn ? PL_LOG_DEBUG : PL_LOG_ERR;
-    PL_MSG(gpu, level, "%s shader MSL source:", stage_names[stage]);
-    pl_msg_source(gpu->log, level, msl.source);
-    if (!fn) {
-        PL_ERR(gpu, "Metal: failed compiling the %s shader MSL: %s", stage_names[stage],
-               error ? error.localizedDescription.UTF8String : "no entry point");
-    }
-
-    return fn;
+    metal_msl_uninit(gpu);
 }
 
 static MTLVertexDescriptor *vertex_descriptor(const struct pl_pass_params *params)
@@ -376,28 +142,21 @@ pl_pass metal_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
         struct pl_pass_t *pass = pl_zalloc_obj(NULL, pass, struct pl_pass_mtl);
         pass->params = pl_pass_params_copy(pass, params);
         struct pl_pass_mtl *pass_mtl = PL_PRIV(pass);
-        void *tmp = pl_tmp(NULL);
-        struct metal_msl vert, frag;
-        id<MTLFunction> vs = nil, fs = nil;
-
-        if (!assign_bindings(gpu, pass))
-            goto error;
-        if (!translate(gpu, pass, tmp, GLSL_SHADER_VERTEX, params->vertex_shader, &vert))
-            goto error;
-        if (!translate(gpu, pass, tmp, GLSL_SHADER_FRAGMENT, params->glsl_shader, &frag))
-            goto error;
-        if (!(vs = build_function(gpu, GLSL_SHADER_VERTEX, vert)))
-            goto error;
-        if (!(fs = build_function(gpu, GLSL_SHADER_FRAGMENT, frag)))
-            goto error;
-        if (!(pass_mtl->pipeline = build_pipeline(gpu, params, vs, fs)))
+        struct metal_shaders shaders;
+        if (!metal_compile_shaders(gpu, params, pass, &shaders))
             goto error;
 
-        pl_free(tmp);
+        pass_mtl->bindings = shaders.bindings;
+        pass_mtl->pushc_stages = shaders.pushc_stages;
+        pass_mtl->pipeline = build_pipeline(gpu, params,
+                                            shaders.functions[GLSL_SHADER_VERTEX],
+                                            shaders.functions[GLSL_SHADER_FRAGMENT]);
+        if (!pass_mtl->pipeline)
+            goto error;
+
         return pass;
 
 error:
-        pl_free(tmp);
         metal_pass_destroy(gpu, pass);
         return NULL;
     }

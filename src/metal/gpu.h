@@ -22,6 +22,7 @@
 #include "../gpu.h"
 #include "../glsl/spirv.h"
 #include "../pl_thread.h"
+#include "msl.h"
 
 #include <libplacebo/metal.h>
 
@@ -88,6 +89,7 @@ struct pl_mtl {
     id<MTLCommandQueue> queue;
     struct metal_caps caps;
     pl_spirv spirv;
+    struct metal_msl_target msl_target;
     id<MTLSamplerState> samplers[PL_TEX_SAMPLE_MODE_COUNT][PL_TEX_ADDRESS_MODE_COUNT];
 
     // Recursive, taken before `lock`. Held to retire command buffers and run

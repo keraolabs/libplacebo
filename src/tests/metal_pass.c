@@ -39,7 +39,7 @@ struct snapshot_vertex {
     float blue;
 };
 
-static struct pl_pass_params snapshot_pass_params(pl_gpu gpu)
+struct pl_pass_params snapshot_pass_params(pl_gpu gpu)
 {
     static struct pl_desc descs[] = {
         { .name = "UBO", .type = PL_DESC_BUF_UNIFORM, .binding = UBO_BINDING },
