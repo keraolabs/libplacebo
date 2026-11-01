@@ -1,0 +1,21 @@
+metal = get_option('metal')
+metal_dep = dependency('appleframeworks', modules: ['Metal', 'Foundation'],
+                       required: metal)
+metal = metal.require(metal_dep.found(),
+                      error_message: 'Metal requires the Metal framework')
+metal = metal.require(add_languages('objc', native: false, required: metal),
+                      error_message: 'Metal requires an Objective-C compiler')
+
+components.set('metal', metal.allowed())
+if metal.allowed()
+  add_project_arguments(build_opts + c_opts + ['-fobjc-arc'], language: 'objc')
+  build_deps += metal_dep
+  tests += 'metal.c'
+  sources += [
+    'metal/context.m',
+    'metal/formats.m',
+    'metal/gpu.m',
+  ]
+else
+  sources += 'metal/stubs.c'
+endif

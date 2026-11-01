@@ -1,5 +1,5 @@
 gpu_tests = [
-  'vulkan.c', 'opengl_surfaceless.c', 'd3d11.c', 'dummy.c'
+  'vulkan.c', 'opengl_surfaceless.c', 'd3d11.c', 'metal.c', 'dummy.c'
 ]
 
 ts = []
@@ -16,9 +16,14 @@ foreach t : tests
   if gpu_tests.contains(t)
     sources += 'gpu_tests.c'
   endif
+  env = {}
+  if t == 'metal.c'
+    env = { 'MTL_DEBUG_LAYER': '1' }
+  endif
   ts += { 'test': t,
           'sources': sources,
-          'deps': deps }
+          'deps': deps,
+          'env': env }
 endforeach
 
 dav1d = dependency('dav1d', required: false)
@@ -37,7 +42,7 @@ foreach t : ts
       link_depends: link_depends,
   )
 
-  test(t['test'], e, timeout: 120)
+  test(t['test'], e, timeout: 120, env: t.get('env', {}))
 endforeach
 
 subdir('include')
