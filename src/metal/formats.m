@@ -187,3 +187,17 @@ void metal_setup_formats(struct pl_gpu_t *gpu)
     gpu->formats = formats.elem;
     gpu->num_formats = formats.num;
 }
+
+size_t metal_transfer_alignment(id<MTLDevice> device)
+{
+    size_t align = 1;
+    for (int i = 0; i < PL_ARRAY_SIZE(metal_formats); i++) {
+        const struct metal_format *mfmt = &metal_formats[i];
+        if (mfmt->pixel == MTLPixelFormatInvalid)
+            continue;
+        align = PL_MAX(align, mfmt->fmt.texel_size);
+        align = PL_MAX(align, [device minimumLinearTextureAlignmentForPixelFormat:mfmt->pixel]);
+    }
+
+    return align;
+}

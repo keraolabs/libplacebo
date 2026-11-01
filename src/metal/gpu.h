@@ -43,6 +43,9 @@ pl_gpu pl_gpu_create_metal(pl_log log, pl_metal mtl, id<MTLDevice> device,
 // Command buffers are numbered by `seq` in commit order, starting at 1. A
 // resource is in use while its `last_use` is above `completed_seq`.
 
+// Operations recorded into one command buffer before it is committed
+#define METAL_MAX_CMD_ENCODES 32
+
 // Runs on a thread using the `pl_gpu` once its command buffer is retired,
 // never concurrently with another callback.
 struct metal_callback {
@@ -77,6 +80,7 @@ struct pl_mtl {
     // Recursive, taken before `lock`. Held to retire command buffers and run
     // their callbacks, which may call back into the `pl_gpu`.
     pl_mutex callback_lock;
+    bool retiring; // under `callback_lock`
 
     // Held to record into `cur`, to commit and to write a resource's
     // `last_use`; never held while waiting for the GPU or running callbacks.
@@ -106,3 +110,45 @@ struct pl_buf_mtl {
     id<MTLBuffer> buf;
     _Atomic uint64_t last_use;
 };
+
+// Returns false, logging an error, once a command buffer of `gpu` failed.
+bool metal_gpu_usable(pl_gpu gpu);
+
+// Returns the command buffer being recorded with `lock` held, or NULL on
+// failure. Encode one operation into `buf`, mark every resource it touches
+// with `metal_cmd_use`, then call `metal_cmd_end`.
+struct metal_cmd *metal_cmd_begin(pl_gpu gpu);
+void metal_cmd_use(struct metal_cmd *cmd, _Atomic uint64_t *last_use);
+void metal_cmd_callback(struct metal_cmd *cmd, void (*run)(void *priv), void *priv);
+void metal_cmd_end(pl_gpu gpu, struct metal_cmd *cmd);
+
+// Returns whether a resource with this `last_use` is still in use after
+// waiting up to `timeout` nanoseconds (UINT64_MAX: until it is not).
+bool metal_poll(pl_gpu gpu, _Atomic uint64_t *last_use, uint64_t timeout);
+
+// Returns a new buffer holding a copy of `data`, or of undefined contents if
+// `data` is NULL. Logs an error and returns nil on failure.
+id<MTLBuffer> metal_new_buffer(pl_gpu gpu, const void *data, size_t size,
+                               MTLResourceOptions options);
+void metal_encode_buf_copy(struct metal_cmd *cmd, id<MTLBuffer> dst, size_t dst_offset,
+                           id<MTLBuffer> src, size_t src_offset, size_t size);
+
+void metal_gpu_flush(pl_gpu gpu);
+void metal_gpu_finish(pl_gpu gpu);
+
+pl_buf metal_buf_create(pl_gpu gpu, const struct pl_buf_params *params);
+void metal_buf_destroy(pl_gpu gpu, pl_buf buf);
+void metal_buf_write(pl_gpu gpu, pl_buf buf, size_t offset, const void *data,
+                     size_t size);
+bool metal_buf_read(pl_gpu gpu, pl_buf buf, size_t offset, void *dest, size_t size);
+void metal_buf_copy(pl_gpu gpu, pl_buf dst, size_t dst_offset, pl_buf src,
+                    size_t src_offset, size_t size);
+bool metal_buf_poll(pl_gpu gpu, pl_buf buf, uint64_t timeout);
+
+pl_tex metal_tex_create(pl_gpu gpu, const struct pl_tex_params *params);
+void metal_tex_destroy(pl_gpu gpu, pl_tex tex);
+void metal_tex_clear_ex(pl_gpu gpu, pl_tex tex, const union pl_clear_color color);
+void metal_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params);
+bool metal_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params);
+bool metal_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params);
+bool metal_tex_poll(pl_gpu gpu, pl_tex tex, uint64_t timeout);

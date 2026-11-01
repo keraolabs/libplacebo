@@ -77,15 +77,24 @@ static struct pl_gpu_limits metal_limits(id<MTLDevice> device, struct metal_caps
     uint32_t max_tex_dim = caps.apple_family >= METAL_MAX_TEX_DIM_FAMILY
                          ? METAL_MAX_TEX_DIM_LARGE : METAL_MAX_TEX_DIM;
     size_t max_buf = device.maxBufferLength;
+    size_t align = metal_transfer_alignment(device);
+    bool unified = device.hasUnifiedMemory;
 
     return (struct pl_gpu_limits) {
         .thread_safe         = true,
+        .callbacks           = true,
         .max_buf_size        = max_buf,
         .max_ubo_size        = max_buf,
         .max_vbo_size        = max_buf,
+        .max_mapped_size     = max_buf,
+        .max_mapped_vram     = unified ? max_buf : 0,
+        .host_cached         = unified,
         .max_tex_1d_dim      = max_tex_dim,
         .max_tex_2d_dim      = max_tex_dim,
         .max_tex_3d_dim      = METAL_MAX_TEX_3D_DIM,
+        .buf_transfer        = true,
+        .align_tex_xfer_pitch  = align,
+        .align_tex_xfer_offset = align,
         .max_pushc_size      = METAL_MAX_SET_BYTES,
         .align_vertex_stride = METAL_VERTEX_STRIDE_ALIGN,
         .fragment_queues     = 1,
@@ -96,7 +105,10 @@ static void metal_gpu_destroy(pl_gpu gpu)
 {
     @autoreleasepool {
         struct pl_mtl *p = PL_PRIV(gpu);
+        metal_gpu_finish(gpu);
         pl_assert(!p->cur && !p->submitted.num && !p->retired.num);
+        pl_free(p->submitted.elem);
+        pl_free(p->retired.elem);
 
         pl_cond_destroy(&p->done_cond);
         pl_mutex_destroy(&p->done_lock);
@@ -149,107 +161,6 @@ static void unimplemented(pl_gpu gpu, const char *fn)
     PL_ERR(gpu, "Metal: %s is not implemented", fn);
 }
 
-static pl_tex metal_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-        return NULL;
-    }
-}
-
-static void metal_tex_destroy(pl_gpu gpu, pl_tex tex)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static void metal_tex_clear_ex(pl_gpu gpu, pl_tex tex, const union pl_clear_color color)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static void metal_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static bool metal_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-        return false;
-    }
-}
-
-static bool metal_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-        return false;
-    }
-}
-
-static bool metal_tex_poll(pl_gpu gpu, pl_tex tex, uint64_t timeout)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-        return false;
-    }
-}
-
-static pl_buf metal_buf_create(pl_gpu gpu, const struct pl_buf_params *params)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-        return NULL;
-    }
-}
-
-static void metal_buf_destroy(pl_gpu gpu, pl_buf buf)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static void metal_buf_write(pl_gpu gpu, pl_buf buf, size_t offset,
-                            const void *data, size_t size)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static bool metal_buf_read(pl_gpu gpu, pl_buf buf, size_t offset,
-                           void *dest, size_t size)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-        return false;
-    }
-}
-
-static void metal_buf_copy(pl_gpu gpu, pl_buf dst, size_t dst_offset,
-                           pl_buf src, size_t src_offset, size_t size)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static bool metal_buf_poll(pl_gpu gpu, pl_buf buf, uint64_t timeout)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-        return false;
-    }
-}
-
 static pl_pass metal_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
 {
     @autoreleasepool {
@@ -266,20 +177,6 @@ static void metal_pass_destroy(pl_gpu gpu, pl_pass pass)
 }
 
 static void metal_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static void metal_gpu_flush(pl_gpu gpu)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static void metal_gpu_finish(pl_gpu gpu)
 {
     @autoreleasepool {
         unimplemented(gpu, __func__);

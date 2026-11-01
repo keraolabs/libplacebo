@@ -41,3 +41,7 @@ static inline const struct metal_format *metal_format(pl_fmt fmt)
 }
 
 void metal_setup_formats(struct pl_gpu_t *gpu);
+
+// Alignment of texture transfer offsets and pitches suiting every pixel
+// format: a power of two, and a multiple of every pixel size
+size_t metal_transfer_alignment(id<MTLDevice> device);

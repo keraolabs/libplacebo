@@ -13,8 +13,11 @@ if metal.allowed()
   tests += 'metal.c'
   sources += [
     'metal/context.m',
+    'metal/command.m',
     'metal/formats.m',
     'metal/gpu.m',
+    'metal/gpu_buf.m',
+    'metal/gpu_tex.m',
   ]
 else
   sources += 'metal/stubs.c'
