@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Run libplacebo's tests, Metal included, on this Mac, and build them for the iPhone.
+"""Run libplacebo's tests, Metal included, on this Mac and the Metal test on an iPhone.
 
-python3 kerao/test.py --ffmpeg-artifacts DIR
+python3 kerao/test.py --ffmpeg-artifacts DIR --device UDID --codesign-identity SHA1
+    --provisioning-profile PATH
 """
 
 import sys
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import checkout
 import deps
+import device
 import ffmpeg
 import glslang
 import libplacebo
@@ -96,7 +98,26 @@ def device_test_checks(
     return [scoped(f"{IOS.identifier} {program.name}", check) for check in checks]
 
 
-def test(ffmpeg_root: Path) -> int:
+def run_on_iphone(
+    build: libplacebo.TestBuild,
+    ffmpeg_input: ffmpeg.FFmpeg,
+    target: device.Target,
+    work: Path,
+) -> list[Check]:
+    """Install the Metal test program of the IOS build as the runner app and
+    judge its console output."""
+    program = build.build_dir / libplacebo.METAL_TEST_PROGRAM
+    libraries = [
+        build.deps_prefix / "lib" / glslang.DYLIB,
+        *device.linked_frameworks(program, ffmpeg_input),
+    ]
+    app = device.make_app(program, libraries, target, work / f"{device.APP_NAME}.app")
+    device.install(target, app)
+    run = suite.parse_metal_output(device.launch(target))
+    return [scoped(IOS.identifier, check) for check in suite.metal_checks(run)]
+
+
+def test(ffmpeg_root: Path, target: device.Target) -> int:
     source = checkout.read_source(ROOT)
     ffmpeg_input = ffmpeg.read_ffmpeg(ffmpeg_root)
     toolchain = read_toolchain()
@@ -104,6 +125,7 @@ def test(ffmpeg_root: Path) -> int:
     checks: list[Check] = [
         checkout.check_submodules(source),
         *ffmpeg.preconditions(ffmpeg_input, TEST_MODE),
+        *device.preconditions(target.udid),
     ]
     if not all(check.ok for check in checks):
         print_summary(facts, checks)
@@ -130,20 +152,21 @@ def test(ffmpeg_root: Path) -> int:
         }
         for build in builds.values():
             checks += build.checks
+        checks += device_test_checks(builds[IOS], ffmpeg_input)
         checks += [
             scoped(MACOS.identifier, check)
             for check in suite.suite_checks(
                 suite.run_meson_tests(builds[MACOS].build_dir)
             )
         ]
-        checks += device_test_checks(builds[IOS], ffmpeg_input)
+        checks += run_on_iphone(builds[IOS], ffmpeg_input, target, work / "app")
     print_summary(facts, checks)
     return 0 if all(check.ok for check in checks) else 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run libplacebo's tests, Metal included, on this Mac."
+        description="Run libplacebo's tests, Metal included, on this Mac and an iPhone."
     )
     parser.add_argument(
         "--ffmpeg-artifacts",
@@ -152,11 +175,30 @@ def main() -> int:
         required=True,
         help="output directory of the kerao FFmpeg build",
     )
+    parser.add_argument(
+        "--device", metavar="UDID", required=True, help="the iPhone to run on"
+    )
+    parser.add_argument(
+        "--codesign-identity",
+        metavar="SHA1",
+        required=True,
+        help="Apple Development identity that signs the runner app",
+    )
+    parser.add_argument(
+        "--provisioning-profile",
+        type=Path,
+        metavar="PATH",
+        required=True,
+        help="development profile of the identity's team that provisions the iPhone",
+    )
     args = parser.parse_args()
     if not args.ffmpeg_artifacts.is_dir():
         parser.error(f"--ffmpeg-artifacts {args.ffmpeg_artifacts} is not a directory")
     try:
-        return test(args.ffmpeg_artifacts.resolve())
+        target = device.read_target(
+            args.device, args.codesign_identity, args.provisioning_profile
+        )
+        return test(args.ffmpeg_artifacts.resolve(), target)
     except (BuildError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

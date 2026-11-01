@@ -12,6 +12,7 @@ PROJECT_PREFIX = "libplacebo:"
 METAL_TEST = "metal.c"
 RESULT_PREFIX = "kerao-metal-test"
 CONFIGURATIONS = ("native", "Apple5")
+VALIDATION = "MTL_DEBUG_LAYER=1"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -25,10 +26,12 @@ class TestResult:
 @dataclasses.dataclass(frozen=True)
 class MetalRun:
     """configurations maps each configuration the Metal test reported as passed
-    to its Apple family; complete says its end line came last with their count."""
+    to its Apple family; complete says its end line came last with their count;
+    validation is the switch it reported reading, None without that line."""
 
     configurations: dict[str, str]
     complete: bool
+    validation: str | None
 
 
 def read_testlog(path: Path) -> list[TestResult]:
@@ -66,6 +69,7 @@ def run_meson_tests(build_dir: Path) -> list[TestResult]:
 def parse_metal_output(stdout: str) -> MetalRun:
     configurations: dict[str, str] = {}
     end: str | None = None
+    validation: str | None = None
     for line in stdout.splitlines():
         prefix, _, rest = line.partition(" ")
         if prefix != RESULT_PREFIX:
@@ -76,7 +80,9 @@ def parse_metal_output(stdout: str) -> MetalRun:
             end = None
         elif len(words) == 2 and words[0] == "end":
             end = words[1]
-    return MetalRun(configurations, end == str(len(configurations)))
+        elif len(words) == 2 and words[0] == "validation":
+            validation = words[1]
+    return MetalRun(configurations, end == str(len(configurations)), validation)
 
 
 def check_test(result: TestResult) -> Check:
@@ -88,7 +94,7 @@ def check_test(result: TestResult) -> Check:
 
 
 def check_configuration(run: MetalRun | None, name: str) -> Check:
-    """run is the Metal test's output, None when meson did not run it."""
+    """run is the Metal test's output, None when it did not run."""
     label = f"Metal {name}"
     if run is None:
         return Check(label, False, f"{METAL_TEST} did not run")
@@ -96,20 +102,24 @@ def check_configuration(run: MetalRun | None, name: str) -> Check:
         return Check(label, False, "no complete result")
     if name not in run.configurations:
         return Check(label, False, "no result line")
-    return Check(label, True, f"{run.configurations[name]}, MTL_DEBUG_LAYER=1")
+    if run.validation != VALIDATION:
+        return Check(label, False, f"the run did not report {VALIDATION}")
+    return Check(label, True, f"{run.configurations[name]}, {run.validation}")
+
+
+def metal_checks(run: MetalRun | None) -> list[Check]:
+    return [check_configuration(run, name) for name in CONFIGURATIONS]
 
 
 def suite_checks(results: list[TestResult]) -> list[Check]:
     metal = next(
         (parse_metal_output(r.stdout) for r in results if r.name == METAL_TEST), None
     )
-    return [
-        *map(check_test, results),
-        *(check_configuration(metal, name) for name in CONFIGURATIONS),
-    ]
+    return [*map(check_test, results), *metal_checks(metal)]
 
 
 FAKE_METAL_OUTPUT = f"""\
+{RESULT_PREFIX} validation {VALIDATION}
 [  0.001] debug: Metal: compiling vertex shader GLSL with glslang
 {RESULT_PREFIX} config native Apple9
 {RESULT_PREFIX} config Apple5 Apple5
@@ -162,4 +172,15 @@ def metal_configuration_without_result_line(tmp: Path) -> tuple[Check, Check]:
     return (
         fake_suite(tmp, FAKE_METAL_OUTPUT, "Apple5"),
         fake_suite(tmp, without_apple5, "Apple5"),
+    )
+
+
+@counterexample
+def metal_test_without_validation_line(tmp: Path) -> tuple[Check, Check]:
+    without_validation = FAKE_METAL_OUTPUT.replace(
+        f"{RESULT_PREFIX} validation {VALIDATION}\n", ""
+    )
+    return (
+        check_configuration(parse_metal_output(FAKE_METAL_OUTPUT), "native"),
+        check_configuration(parse_metal_output(without_validation), "native"),
     )
