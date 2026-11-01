@@ -100,6 +100,19 @@ class Library:
     headers: Path
 
 
+@dataclasses.dataclass(frozen=True)
+class Pin:
+    """The upstream tag and commit a dependency is built from."""
+
+    tag: str
+    commit: str
+
+    def pkgconfig_variables(self) -> str:
+        """pkg-config variable lines naming the pin, which libplacebo's meson
+        configuration reads as `tag` and `commit`."""
+        return f"tag={self.tag}\ncommit={self.commit}\n"
+
+
 class BuildError(Exception):
     pass
 

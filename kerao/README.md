@@ -199,6 +199,8 @@ A check is a `check_*` function in `kerao/`, and the self-test also fails when n
 
 Each build clones the pinned tags into a temporary directory and stops if a checkout's commit differs from its pin in `kerao/deps.py`. Both projects' tags are lightweight, so the commit is the pin.
 
+`glslang.pc` and `spirv-cross-c.pc` carry the pin as the variables `tag` and `commit`. The Metal backend's meson configuration requires both and compiles them in as the compiler identity that is part of the key of every MSL cache entry, so MSL translated by other glslang or SPIRV-Cross sources is never reused.
+
 | Library | Repository | Tag | Commit |
 | --- | --- | --- | --- |
 | glslang | `https://github.com/KhronosGroup/glslang.git` | `16.6.0` | `e1b562a8bed273a02f30b59b66a5d499793cede5` |

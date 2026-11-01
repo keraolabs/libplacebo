@@ -4,17 +4,17 @@ from collections.abc import Callable
 from pathlib import Path
 
 from checkout import fake_git, git
-from common import Check, Slice, capture, counterexample, scoped
+from common import Check, Pin, Slice, capture, counterexample, scoped
 from glslang import build_glslang
 from spirv_cross import build_spirv_cross
 
-Builder = Callable[[Slice, Path, Path, Path, Path], list[Check]]
+Builder = Callable[[Slice, Path, Path, Path, Path, Pin], list[Check]]
 
 
 @dataclasses.dataclass(frozen=True)
 class Dep:
-    """build(slice, sdk path, checkout, work dir, prefix) installs the dep under prefix
-    and returns its checks. notices are license files relative to the checkout."""
+    """build(slice, sdk path, checkout, work dir, prefix, pin) installs the dep under
+    prefix and returns its checks. notices are license files relative to the checkout."""
 
     name: str
     repository: str
@@ -22,6 +22,10 @@ class Dep:
     commit: str
     build: Builder
     notices: tuple[str, ...]
+
+    @property
+    def pin(self) -> Pin:
+        return Pin(self.tag, self.commit)
 
 
 GLSLANG = Dep(
@@ -71,7 +75,7 @@ def build_deps(
         check
         for dep in DEPS
         for check in dep.build(
-            slice_, sdk_path, checkouts[dep], work / dep.name, prefix
+            slice_, sdk_path, checkouts[dep], work / dep.name, prefix, dep.pin
         )
     ]
     return [scoped(slice_.identifier, check) for check in checks]

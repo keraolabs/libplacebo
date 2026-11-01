@@ -7,6 +7,7 @@ from common import (
     PKGCONFIG_DIR,
     BuildError,
     Check,
+    Pin,
     Slice,
     build_env,
     capture,
@@ -143,12 +144,12 @@ def read_c_api_version(header: Path) -> str:
     return f"{parts['MAJOR']}.{parts['MINOR']}.{parts['PATCH']}"
 
 
-def pkgconfig(prefix: Path, version: str) -> str:
+def pkgconfig(prefix: Path, version: str, pin: Pin) -> str:
     return f"""\
 prefix={prefix}
 libdir=${{prefix}}/lib
 includedir=${{prefix}}/include
-
+{pin.pkgconfig_variables()}
 Name: {PACKAGE}
 Description: SPIRV-Cross C API with the GLSL and MSL backends, static
 Version: {version}
@@ -210,7 +211,7 @@ def check_no_exports(exports: frozenset[str]) -> Check:
 
 
 def build_spirv_cross(
-    slice_: Slice, sdk_path: Path, checkout: Path, work: Path, prefix: Path
+    slice_: Slice, sdk_path: Path, checkout: Path, work: Path, prefix: Path, pin: Pin
 ) -> list[Check]:
     """Install SPIRV-Cross's headers and static libraries under prefix."""
     build_dir, install = cmake_build(
@@ -228,7 +229,7 @@ def build_spirv_cross(
         Path(shutil.copy(install / "lib" / name, prefix / "lib")) for name in ARCHIVES
     ]
     (prefix / PKGCONFIG_DIR / f"{PACKAGE}.pc").write_text(
-        pkgconfig(prefix, read_c_api_version(prefix / HEADERS / C_API_HEADER))
+        pkgconfig(prefix, read_c_api_version(prefix / HEADERS / C_API_HEADER), pin)
     )
     files = read_compiled_files(build_dir, system_roots(slice_, sdk_path))
     return [
@@ -339,6 +340,6 @@ def pkgconfig_listing_only_the_c_api(tmp: Path) -> tuple[Check, Check]:
         (directory / f"{PACKAGE}.pc").write_text(text)
         return check_pkgconfig(read_pkgconfig_flags(directory, PACKAGE))
 
-    good = pkgconfig(prefix, "0.0.0")
+    good = pkgconfig(prefix, "0.0.0", Pin("v0", "0" * 40))
     bad = good.replace(LINK_FLAGS, f"-l{library_name(ARCHIVES[-1])}")
     return flags("good", good), flags("bad", bad)
