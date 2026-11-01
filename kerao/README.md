@@ -42,7 +42,7 @@ The fork has no CI: the Metal device of GitHub-hosted macOS runners is "Apple Pa
 
 ## Prerequisites
 
-- A Mac with Apple silicon.
+- A Mac with Apple silicon. The test script runs the Metal tests on it.
 - Xcode, selected and set up:
 
   ```sh
@@ -51,49 +51,104 @@ The fork has no CI: the Metal device of GitHub-hosted macOS runners is "Apple Pa
   ```
 
 - Python 3.11 or newer as `python3`, meson 1.3.0 or newer, ninja, CMake 3.22.1 or newer and pkg-config, all from Homebrew: `brew install python meson ninja cmake pkgconf`. The `/usr/bin/python3` macOS ships is too old. The minimums are libplacebo's and glslang's own; the summary prints the versions a build used. The build was last verified with Xcode 27.0 (27A266a), meson 1.11.1, ninja 1.13.2, CMake 4.3.2 and pkgconf 2.5.1.
+- Four of upstream's submodules, at the commits the checkout records:
+
+  ```sh
+  git submodule update --init 3rdparty/Vulkan-Headers 3rdparty/fast_float 3rdparty/jinja 3rdparty/markupsafe
+  ```
+
+  Without them meson would take Jinja from the host or build without fast_float, so both scripts refuse to start.
 - Network access to the two repositories under [Dependencies](#dependencies).
-- The output directory of the FFmpeg fork's `kerao/build.py`.
+- The output directory of the FFmpeg fork's `kerao/build.py` for the pinned FFmpeg tag, `n9.0.2-kerao.1` (commit `ae49c6ac4a2409553ca0f9a00f9e252cbce632a0`). The scripts link against it and never build FFmpeg themselves.
 
 ## Usage
 
-`kerao/build.py` is the entry point. It builds the checkout it lives in from any working directory.
+Both scripts build the checkout they live in, from any working directory.
 
 ```sh
 python3 kerao/build.py --output <dir> --mode dev --ffmpeg-artifacts <ffmpeg-output>
 python3 kerao/build.py --output <dir> --mode release --ffmpeg-artifacts <ffmpeg-output>
 python3 kerao/build.py --self-test
+python3 kerao/test.py --ffmpeg-artifacts <ffmpeg-output>
 ```
 
 - `--output`: a new or empty directory for the build products, outside the checkout.
-- `--mode`: `release` or `dev`. Both run the same steps; the summary records which was asked for.
-- `--ffmpeg-artifacts`: the output directory of the FFmpeg fork's build. It must exist; nothing in it is read yet.
+- `--mode`: `release` or `dev`, see [Modes](#modes).
+- `--ffmpeg-artifacts`: the output directory of the FFmpeg fork's build.
 - `--self-test`: runs the [self-test](#self-test) instead of a build.
 
-Unknown or missing arguments exit with status 2. A build runs every check before it exits and prints a summary on stdout: commit, toolchain and dependencies, then one `pass` or `FAIL` line per check. Build tools write to stderr. The exit status is 0 only when every check passes. A failing tool or a missing file stops the build at once with `error:` on stderr.
+Unknown or missing arguments exit with status 2. Each script runs every check before it exits and prints a summary on stdout: commit, toolchain, dependencies and FFmpeg input, then one `pass` or `FAIL` line per check. Build tools write to stderr. The exit status is 0 only when every check passes. A failing tool or a missing file stops the script at once with `error:` on stderr. When a precondition fails, the summary lists only the preconditions and ends with `not built: preconditions failed` (`not tested` for the test script).
+
+### Modes
+
+A `release` build needs HEAD to carry exactly one annotated `v7.387.0-kerao.<n>` tag and the worktree to be clean, untracked files included. It accepts only an FFmpeg output whose `artifact.json` has `mode` `release`. Its frameworks carry `CFBundleVersion` `<n>`, and its `pl_version()` must be exactly `v7.387.0 (v7.387.0-kerao.<n>)`: upstream's `src/version.py` takes the version from `git describe --dirty`, which sees only annotated tags.
+
+A `dev` build takes any commit and any FFmpeg mode, and its `artifact.json` says `dev`. Its frameworks carry `CFBundleVersion` `0`, and `pl_version()` must equal what `src/version.py` makes of the checkout.
+
+In both modes the FFmpeg output's `tag` and `commit` must equal the pins in `kerao/ffmpeg.py`, and every binary its `artifact.json` lists must have the recorded SHA-256. That identity goes into `inputs` of the build's own `artifact.json`.
 
 ### Output
 
 ```text
-<dir>/deps/macos-arm64/
+<dir>/
+  libplacebo.xcframework/macos-arm64/libplacebo.framework
+  libglslang.xcframework/macos-arm64/libglslang.framework
+  include/libplacebo/…
   include/glslang/…
-  include/spirv_cross/…
-  lib/libglslang.dylib
-  lib/libspirv-cross-core.a
-  lib/libspirv-cross-glsl.a
-  lib/libspirv-cross-msl.a
-  lib/libspirv-cross-c.a
-  lib/pkgconfig/glslang.pc
-  lib/pkgconfig/spirv-cross-c.pc
-  native.ini
+  artifact.json
+  notices/libplacebo/LICENSE
+  notices/glslang/LICENSE.txt
+  notices/SPIRV-Cross/MIT.txt
+  notices/SPIRV-Cross/LicenseRef-KhronosFreeUse.txt
 ```
 
-The slice is `arm64-apple-macos14.0`. Every binary holds only arm64 and is built for macOS 14.0.
+The slice `macos-arm64` is built for `arm64-apple-macos14.0` only. Each framework uses the versioned macOS layout: the binary is `Versions/A/<name>`, whose install name is `@rpath/<name>.framework/Versions/A/<name>`, and whose only `LC_RPATH` is `@loader_path/../../..`, the directory holding the frameworks. Libraries are linked with `-Wl,-headerpad_max_install_names`, install names are rewritten after linking, and nothing is signed. libplacebo loads `libglslang`, `libavutil` and `libavcodec` through `@rpath`, so an app embeds all of them, and `libswresample`, which `libavcodec` loads, next to each other.
 
-`native.ini` is a meson native file for the slice. Its `c`, `cpp` and `objc` compilers are `xcrun --sdk macosx clang` with `-target arm64-apple-macos14.0` and `--sysroot` set to the SDK `xcrun` reports, and its `pkg_config_libdir` is only the `lib/pkgconfig` directory beside it, so meson finds glslang and SPIRV-Cross there and never a package of the host. It leaves `c_args`, `cpp_args` and the link arguments free, so a second `--native-file` given before it can add them.
+`Resources/` holds an `Info.plist` with the keys of Xcode's framework template, `CFBundleShortVersionString` `7.387.0` and `LSMinimumSystemVersion` `14.0`, and a `PrivacyInfo.xcprivacy` generated from the library's record in `kerao/required-reason-api/`. Neither library calls an API of Apple's required-reason list, which the build checks against the binaries' imported symbols and Objective-C selectors.
+
+`Headers/` holds the library's public headers, libplacebo's with the `config.h` meson generates. `include/` holds the same trees for bindgen. The build checks that both are identical byte for byte across slices.
+
+`notices/` holds the license texts of libplacebo (LGPL-2.1), glslang and SPIRV-Cross. libplacebo takes SPIRV-Cross under MIT, and the Khronos headers it compiles carry the notice in `LicenseRef-KhronosFreeUse.txt`.
+
+`artifact.json` follows the delivery contract the FFmpeg fork shares:
+
+| Field | Content |
+| --- | --- |
+| `libraries` | `["libplacebo", "libglslang"]` |
+| `repository` | `https://github.com/keraolabs/libplacebo` |
+| `tag` | the release tag, or `git describe --tags --always` in dev mode |
+| `commit`, `mode`, `dirty`, `built_at` | the checkout's commit, `release` or `dev`, whether the worktree had changes, UTC build time |
+| `xcode_build`, `sdks` | Xcode's build version, and each slice's SDK name and version |
+| `tools` | meson, ninja, CMake and pkg-config versions |
+| `deps` | glslang and SPIRV-Cross: name, repository, tag, commit |
+| `inputs` | the FFmpeg output's repository, tag, commit, mode and binaries with their SHA-256 |
+| `frameworks` | each framework's slices: identifier, path of the binary relative to `<dir>`, SHA-256 |
+| `configure` | each slice's meson arguments |
+| `unverified` | checks the build skipped; always empty |
+
+### Build
+
+Each slice builds the [dependencies](#dependencies), then configures libplacebo with meson:
+
+```text
+--auto-features=disabled -Dmetal=enabled -Dglslang=enabled -Ddovi=enabled -Dlibdovi=disabled -Ddemos=false
+```
+
+and a native file the script writes. Its `c`, `cpp` and `objc` compilers are `xcrun --sdk macosx clang` with `-target arm64-apple-macos14.0` and `--sysroot` set to the SDK `xcrun` reports, its compile arguments find FFmpeg's `include/` and the `libavutil` and `libavcodec` frameworks of the slice, and its `pkg_config_libdir` holds only the dependencies, so meson never finds a package of the host.
+
+After packaging, the build checks each framework binary: platform and minimum OS of `LC_BUILD_VERSION`, arm64 only, install name, the single `LC_RPATH`, and that every `LC_LOAD_DYLIB` is a delivered framework, an FFmpeg framework or a system library. It checks that libplacebo exports only symbols its public headers declare `PL_API`, all 35 `PL_LIBAV_API` functions of `utils/libav.h` among them. Upstream's headers for D3D11 and Vulkan declare a few symbols that a build without those backends does not export; that is not a failure.
+
+Last, the build compiles `kerao/consumer.c` against the delivered macOS slice and the FFmpeg frameworks, with one `-rpath` per framework directory, and runs it without any `DYLD_*` variable. The program prints `pl_version()` and the plane count `pl_plane_data_from_pixfmt()` gives for NV12, which must match the mode's version and 2.
+
+### Test
+
+`kerao/test.py` builds the macOS slice the same way with `-Dtests=true` added, links the test programs with an `LC_RPATH` per FFmpeg framework directory, and runs `meson test` on this Mac. Its summary has one line per test, then one per Metal configuration.
+
+The Metal test, `src/tests/metal.c`, runs with `MTL_DEBUG_LAYER=1` and creates two `pl_gpu`s on the same device in one run: one with the device's own capabilities and one capped to Apple5. It prints `kerao-metal-test config <name> Apple<family>` after every test of a configuration has passed, and `kerao-metal-test end <count>` as its last line. A configuration passes only when its line is there and the end line follows with the right count. An FFmpeg output of either mode is accepted.
 
 ### Self-test
 
-`--self-test` runs each check against counterexamples without building the dependencies. Every counterexample gives a check an input it must pass and a broken copy it must fail, such as a dylib with an x86_64 slice or a compiled header whose license line no longer offers MIT. It needs Xcode, CMake and ninja, but no network, and takes a few seconds.
+`--self-test` runs each check against counterexamples without building anything. Every counterexample gives a check an input it must pass and a broken copy it must fail, such as a framework with a second `LC_RPATH`, an altered install name, a library missing a `PL_LIBAV_API` export, an `Info.plist` with another version, or a `config.h` that differs in one slice. It needs Xcode, CMake and ninja, but no network, and takes a few seconds.
 
 A check is a `check_*` function in `kerao/`, and the self-test also fails when no counterexample calls one. A new check therefore comes with a counterexample registered through `@counterexample`.
 

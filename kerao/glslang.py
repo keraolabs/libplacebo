@@ -7,6 +7,7 @@ from common import (
     PKGCONFIG_DIR,
     BuildError,
     Check,
+    Library,
     Slice,
     capture,
     counterexample,
@@ -133,6 +134,13 @@ def dylib_checks(slice_: Slice, dylib: Path, archives: list[Path]) -> list[Check
         ),
     ]
     return [scoped(DYLIB, check) for check in checks]
+
+
+def installed_library(prefix: Path) -> Library:
+    """libglslang.dylib and glslang's public headers as build_glslang installs them."""
+    return Library(
+        dylib=prefix / "lib" / DYLIB, headers=prefix / "include" / "glslang"
+    )
 
 
 def build_glslang(

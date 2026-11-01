@@ -1,15 +1,36 @@
+import dataclasses
 import re
 from pathlib import Path
 
 from common import ARCHS, MACOS, Check, capture, counterexample, listed
 from toolchain import tool
 
+DYLIB_COMMANDS = frozenset(
+    {
+        "LC_LOAD_DYLIB",
+        "LC_LOAD_WEAK_DYLIB",
+        "LC_REEXPORT_DYLIB",
+        "LC_LOAD_UPWARD_DYLIB",
+        "LC_LAZY_LOAD_DYLIB",
+    }
+)
+SYSTEM_PREFIXES = ("/usr/lib/", "/System/Library/")
 OFFSET_SUFFIX = re.compile(r" \(offset \d+\)$")
 ARCHIVE_MEMBER = re.compile(r"\S.*\((?P<member>[^()]+)\):")
 
 BuildVersions = tuple[tuple[int, str], ...]
 TARGETED = ("-target", MACOS.target)
 FAKE_FUNCTION = "int fake() { return 0; }\n"
+
+
+@dataclasses.dataclass(frozen=True)
+class MachO:
+    path: Path
+    archs: tuple[str, ...]
+    install_ids: tuple[str, ...]
+    rpaths: tuple[str, ...]
+    dylibs: tuple[str, ...]
+    builds: BuildVersions
 
 
 def load_commands(otool_output: str) -> list[dict[str, str]]:
@@ -55,6 +76,22 @@ def read_archs(path: Path) -> tuple[str, ...]:
     return tuple(capture(["xcrun", "lipo", "-archs", str(path)]).split())
 
 
+def read_macho(path: Path) -> MachO:
+    commands = load_commands(capture(["xcrun", "otool", "-l", str(path)]))
+
+    def values(kinds: frozenset[str], key: str) -> tuple[str, ...]:
+        return tuple(command[key] for command in commands if command["cmd"] in kinds)
+
+    return MachO(
+        path=path,
+        archs=read_archs(path),
+        install_ids=values(frozenset({"LC_ID_DYLIB"}), "name"),
+        rpaths=values(frozenset({"LC_RPATH"}), "path"),
+        dylibs=values(DYLIB_COMMANDS, "name"),
+        builds=build_versions(commands),
+    )
+
+
 def read_exports(binary: Path) -> frozenset[str]:
     return frozenset(capture(["xcrun", "nm", "-g", "-U", "-j", str(binary)]).split())
 
@@ -73,6 +110,45 @@ def check_architectures(archs: tuple[str, ...]) -> Check:
 def check_build_version(builds: BuildVersions, platform: int, floor: str) -> Check:
     return Check(
         "build version", builds == ((platform, floor),), describe_builds(builds)
+    )
+
+
+def check_rpath(macho: MachO, rpath: str) -> Check:
+    return Check(
+        "rpath", macho.rpaths == (rpath,), ", ".join(macho.rpaths) or "no LC_RPATH"
+    )
+
+
+def check_install_id(macho: MachO, install_id: str) -> Check:
+    return Check(
+        "install id",
+        macho.install_ids == (install_id,),
+        ", ".join(macho.install_ids) or "no LC_ID_DYLIB",
+    )
+
+
+def check_dependencies(macho: MachO, bundled: frozenset[str]) -> Check:
+    """bundled holds the install ids of the frameworks shipped alongside this binary."""
+    foreign = [
+        name
+        for name in macho.dylibs
+        if name not in bundled and not name.startswith(SYSTEM_PREFIXES)
+    ]
+    return Check(
+        "dependencies",
+        not foreign,
+        ", ".join(foreign)
+        or f"{len(macho.dylibs)} load commands, all bundled or system",
+    )
+
+
+def check_linked_frameworks(macho: MachO, required: tuple[str, ...]) -> Check:
+    """required are install ids this binary must load."""
+    missing = [name for name in required if name not in macho.dylibs]
+    return Check(
+        "linked frameworks",
+        not missing,
+        f"no {', '.join(missing)}" if missing else ", ".join(required),
     )
 
 

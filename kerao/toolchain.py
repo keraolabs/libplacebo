@@ -8,13 +8,14 @@ TOOLS = ("meson", "ninja", "cmake", "pkg-config")
 CMAKE_VERSION_PREFIX = "cmake version "
 CMAKE_SYSTEMS = {MACOS: "Darwin"}
 CMAKE_PROCESSOR = "arm64"
-NATIVE_FILE = "native.ini"
 
 
 @dataclasses.dataclass(frozen=True)
 class Sdk:
     name: str
     version: str
+    build: str
+    platform_version: str
     path: Path
 
 
@@ -22,6 +23,7 @@ class Sdk:
 class Toolchain:
     xcode_version: str
     xcode_build: str
+    machine_build: str
     sdks: dict[str, Sdk]
     tools: dict[str, str]
 
@@ -30,7 +32,13 @@ def read_sdk(name: str) -> Sdk:
     def show(what: str) -> str:
         return capture(["xcrun", "--sdk", name, f"--show-sdk-{what}"])
 
-    return Sdk(name=name, version=show("version"), path=Path(show("path")))
+    return Sdk(
+        name=name,
+        version=show("version"),
+        build=show("build-version"),
+        platform_version=show("platform-version"),
+        path=Path(show("path")),
+    )
 
 
 def read_tool_version(name: str) -> str:
@@ -48,6 +56,7 @@ def read_toolchain() -> Toolchain:
     return Toolchain(
         xcode_version=version[1],
         xcode_build=version[2],
+        machine_build=capture(["sw_vers", "-buildVersion"]),
         sdks={slice_.identifier: read_sdk(slice_.sdk) for slice_ in SLICES},
         tools={name: read_tool_version(name) for name in TOOLS},
     )
@@ -86,7 +95,13 @@ def meson_literal(values: list[str]) -> str:
     return "[" + ", ".join(f"'{value}'" for value in quoted) + "]"
 
 
-def meson_native_file(slice_: Slice, sdk_path: Path, pkgconfig_dir: Path) -> str:
+def meson_native_file(
+    slice_: Slice,
+    sdk_path: Path,
+    pkgconfig_dir: Path,
+    compile_args: list[str],
+    link_args: list[str],
+) -> str:
     """A native file compiling for slice_ that finds packages only in pkgconfig_dir."""
     return f"""\
 [binaries]
@@ -95,6 +110,14 @@ cpp = {meson_literal(compiler(slice_, sdk_path, "clang++"))}
 objc = {meson_literal(compiler(slice_, sdk_path, "clang"))}
 ar = {meson_literal(tool(slice_, "ar"))}
 strip = {meson_literal(tool(slice_, "strip"))}
+
+[built-in options]
+c_args = {meson_literal(compile_args)}
+cpp_args = {meson_literal(compile_args)}
+objc_args = {meson_literal(compile_args)}
+c_link_args = {meson_literal(link_args)}
+cpp_link_args = {meson_literal(link_args)}
+objc_link_args = {meson_literal(link_args)}
 
 [properties]
 pkg_config_libdir = {meson_literal([str(pkgconfig_dir)])}
@@ -142,3 +165,27 @@ def cmake_build(
         env=build_env(),
     )
     return build_dir, prefix
+
+
+def fake_sdk(name: str, build: str) -> Sdk:
+    return Sdk(
+        name=name,
+        version="27.0",
+        build=build,
+        platform_version="27.0",
+        path=Path(f"/SDKs/{name}27.0.sdk"),
+    )
+
+
+FAKE_TOOLCHAIN = Toolchain(
+    xcode_version="27.0",
+    xcode_build="27A266a",
+    machine_build="27A5339a",
+    sdks={MACOS.identifier: fake_sdk(MACOS.sdk, "27A5339a")},
+    tools={
+        "meson": "1.11.1",
+        "ninja": "1.13.2",
+        "cmake": "4.3.2",
+        "pkg-config": "2.5.1",
+    },
+)

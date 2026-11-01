@@ -1,12 +1,12 @@
 import dataclasses
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 
 from checkout import fake_git, git
-from common import PKGCONFIG_DIR, Check, Slice, capture, counterexample, scoped
+from common import Check, Slice, capture, counterexample, scoped
 from glslang import build_glslang
 from spirv_cross import build_spirv_cross
-from toolchain import NATIVE_FILE, meson_native_file
 
 Builder = Callable[[Slice, Path, Path, Path, Path], list[Check]]
 
@@ -14,13 +14,14 @@ Builder = Callable[[Slice, Path, Path, Path, Path], list[Check]]
 @dataclasses.dataclass(frozen=True)
 class Dep:
     """build(slice, sdk path, checkout, work dir, prefix) installs the dep under prefix
-    and returns its checks."""
+    and returns its checks. notices are license files relative to the checkout."""
 
     name: str
     repository: str
     tag: str
     commit: str
     build: Builder
+    notices: tuple[str, ...]
 
 
 GLSLANG = Dep(
@@ -29,6 +30,7 @@ GLSLANG = Dep(
     tag="16.6.0",
     commit="e1b562a8bed273a02f30b59b66a5d499793cede5",
     build=build_glslang,
+    notices=("LICENSE.txt",),
 )
 SPIRV_CROSS = Dep(
     name="SPIRV-Cross",
@@ -36,6 +38,7 @@ SPIRV_CROSS = Dep(
     tag="vulkan-sdk-1.4.363.0",
     commit="f11ba9f0b21ba8fc15153d50a2a1ae31ab1cf8f7",
     build=build_spirv_cross,
+    notices=("LICENSES/MIT.txt", "LICENSES/LicenseRef-KhronosFreeUse.txt"),
 )
 DEPS = (GLSLANG, SPIRV_CROSS)
 
@@ -63,7 +66,7 @@ def check_commit(dep: Dep, checkout: Path) -> Check:
 def build_deps(
     slice_: Slice, sdk_path: Path, checkouts: dict[Dep, Path], work: Path, prefix: Path
 ) -> list[Check]:
-    """Install every dep for slice_ under prefix, with a native file that finds them."""
+    """Install every dep for slice_ under prefix."""
     checks = [
         check
         for dep in DEPS
@@ -71,10 +74,15 @@ def build_deps(
             slice_, sdk_path, checkouts[dep], work / dep.name, prefix
         )
     ]
-    (prefix / NATIVE_FILE).write_text(
-        meson_native_file(slice_, sdk_path, prefix / PKGCONFIG_DIR)
-    )
     return [scoped(slice_.identifier, check) for check in checks]
+
+
+def copy_notices(checkouts: dict[Dep, Path], notices: Path) -> None:
+    """Copy each dep's license files to notices/<dep name>/."""
+    for dep, checkout in checkouts.items():
+        (notices / dep.name).mkdir(parents=True)
+        for name in dep.notices:
+            shutil.copy(checkout / name, notices / dep.name / Path(name).name)
 
 
 def fake_upstream(tmp: Path) -> Dep:
