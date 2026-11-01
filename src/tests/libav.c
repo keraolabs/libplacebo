@@ -1,6 +1,8 @@
 #include "utils.h"
 #include "libplacebo/utils/libav.h"
 
+#include <libavutil/pixdesc.h>
+
 int main()
 {
     struct pl_plane_data data[4] = {0};

@@ -14,6 +14,10 @@ elif has_execinfo
   build_deps += libexecinfo
 endif
 
+lavu = dependency('libavutil', method: 'extraframework')
+lavc = dependency('libavcodec', method: 'extraframework')
+build_deps += [lavu, lavc]
+
 link_args = []
 link_depends = []
 
@@ -84,7 +88,6 @@ headers = [
   'utils/dolbyvision.h',
   'utils/frame_queue.h',
   'utils/libav.h',
-  'utils/libav_internal.h',
   'utils/upload.h',
   'vulkan.h',
 ]
@@ -113,6 +116,7 @@ sources = [
   'tone_mapping.c',
   'utils/dolbyvision.c',
   'utils/frame_queue.c',
+  'utils/libav.c',
   'utils/upload.c',
 ]
 

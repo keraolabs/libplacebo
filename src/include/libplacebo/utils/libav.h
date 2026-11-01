@@ -23,18 +23,13 @@
 #include <libplacebo/shaders/deinterlacing.h>
 #include <libplacebo/utils/upload.h>
 
-#if defined(__cplusplus) && !defined(PL_LIBAV_IMPLEMENTATION)
-# define PL_LIBAV_API
+// libplacebo exports the functions declared here. PL_LIBAV_IMPLEMENTATION is
+// reserved for libplacebo's own translation unit, which defines it to 1.
+#ifndef PL_LIBAV_IMPLEMENTATION
 # define PL_LIBAV_IMPLEMENTATION 0
-# warning Remember to include this file with a PL_LIBAV_IMPLEMENTATION set to 1 in \
-          C translation unit to provide implementation. Suppress this warning by \
-          defining PL_LIBAV_IMPLEMENTATION to 0 in C++ files.
-#elif !defined(PL_LIBAV_IMPLEMENTATION)
-# define PL_LIBAV_API static inline
-# define PL_LIBAV_IMPLEMENTATION 1
-#else
-# define PL_LIBAV_API
 #endif
+
+#define PL_LIBAV_API PL_API
 
 PL_API_BEGIN
 
@@ -304,8 +299,6 @@ PL_LIBAV_API void pl_film_grain_from_av(struct pl_film_grain_data *out_data,
 // Deprecated alias for backwards compatibility
 #define pl_swapchain_colors_from_avframe pl_color_space_from_avframe
 
-// Actual implementation, included as part of this header to avoid having
-// a compile-time dependency on libavutil.
 #if PL_LIBAV_IMPLEMENTATION
 # include <libplacebo/utils/libav_internal.h>
 #endif
