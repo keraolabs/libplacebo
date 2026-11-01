@@ -18,6 +18,7 @@ foreach t : tests
   endif
   env = {}
   if t == 'metal.c'
+    sources += 'metal_pass.c'
     env = { 'MTL_DEBUG_LAYER': '1' }
   endif
   ts += { 'test': t,

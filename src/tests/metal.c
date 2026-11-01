@@ -1,10 +1,8 @@
-#include "gpu_tests.h"
+#include "metal_tests.h"
 #include "pl_thread.h"
 
 #include <objc/message.h>
 #include <objc/runtime.h>
-
-#include <libplacebo/metal.h>
 
 // Metal feature set tables, Apple5 and later
 #define APPLE5                  5
@@ -167,14 +165,11 @@ static void require_caps_within(pl_gpu capped, pl_gpu gpu)
     REQUIRE_CMP(capped->limits.max_tex_2d_dim, <=, gpu->limits.max_tex_2d_dim, PRIu32);
 }
 
-#define TEX_DIM     16
-#define TEX_BYTES   (TEX_DIM * TEX_DIM * 4)
-
 // rgba8 stores each k / 255 as k
 static const float clear_color[4] = { 51 / 255.0f, 102 / 255.0f, 153 / 255.0f, 1.0f };
 static const uint8_t clear_texel[4] = { 51, 102, 153, 255 };
 
-static pl_tex create_rgba8(pl_gpu gpu)
+pl_tex create_rgba8(pl_gpu gpu)
 {
     pl_tex tex = pl_tex_create(gpu, pl_tex_params(
         .format         = pl_find_named_fmt(gpu, "rgba8"),
@@ -195,13 +190,13 @@ static void fill_pattern(uint8_t *data, size_t size, int seed)
         data[i] = (i * 7 + seed) % 251;
 }
 
-static void set_flag(void *priv)
+void set_flag(void *priv)
 {
     bool *flag = priv;
     *flag = true;
 }
 
-static void require_rgba8(pl_gpu gpu, pl_tex tex, const uint8_t *expected)
+void require_rgba8(pl_gpu gpu, pl_tex tex, const uint8_t *expected)
 {
     uint8_t data[TEX_BYTES];
     REQUIRE(pl_tex_download(gpu, pl_tex_transfer_params(.tex = tex, .ptr = data)));
@@ -294,10 +289,7 @@ static void encode_wait(id cmd, id event)
             sel_registerName("encodeWaitForEvent:value:"), event, GATE_OPEN);
 }
 
-// Holds back the GPU work of every command buffer committed to the queue of
-// `mtl` after this call until `gate_open`, which must follow within the GPU
-// timeout of a few seconds.
-static void *gate_close(pl_metal mtl)
+void *gate_close(pl_metal mtl)
 {
     id pool = msg_id(msg_id((id) objc_getClass("NSAutoreleasePool"), "alloc"), "init");
     id event = msg_id((id) mtl->device, "newSharedEvent");
@@ -308,7 +300,7 @@ static void *gate_close(pl_metal mtl)
     return event;
 }
 
-static void gate_open(void *event)
+void gate_open(void *event)
 {
     ((void (*)(id, SEL, uint64_t)) objc_msgSend)((id) event,
             sel_registerName("setSignaledValue:"), GATE_OPEN);
@@ -593,8 +585,10 @@ int main()
     pl_metal configs[] = { native, apple5 };
     for (int i = 0; i < PL_ARRAY_SIZE(configs); i++) {
         pl_gpu gpu = configs[i]->gpu;
-        pl_buffer_tests(gpu);
-        pl_texture_tests(gpu);
+        metal_translation_tests(gpu);
+        metal_snapshot_tests(configs[i]);
+        metal_emulated_format_tests(gpu);
+        gpu_shader_tests(gpu);
         metal_clear_blit_tests(gpu);
         metal_buf_transfer_tests(gpu);
         metal_buf_in_use_tests(configs[i]);

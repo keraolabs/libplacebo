@@ -26,7 +26,6 @@
 #define METAL_MAX_TEX_DIM_FAMILY    10   // first family with the larger limit
 #define METAL_MAX_TEX_DIM_LARGE     32768
 #define METAL_MAX_TEX_3D_DIM        2048
-#define METAL_MAX_SET_BYTES         4096
 #define METAL_VERTEX_STRIDE_ALIGN   1
 
 // Metal Shading Language specification
@@ -109,6 +108,7 @@ static void metal_gpu_destroy(pl_gpu gpu)
         pl_assert(!p->cur && !p->submitted.num && !p->retired.num);
         pl_free(p->submitted.elem);
         pl_free(p->retired.elem);
+        metal_pass_uninit(gpu);
 
         pl_cond_destroy(&p->done_cond);
         pl_mutex_destroy(&p->done_lock);
@@ -153,33 +153,6 @@ static uint64_t metal_timer_query(pl_gpu gpu, pl_timer timer)
 {
     @autoreleasepool {
         pl_unreachable();
-    }
-}
-
-static void unimplemented(pl_gpu gpu, const char *fn)
-{
-    PL_ERR(gpu, "Metal: %s is not implemented", fn);
-}
-
-static pl_pass metal_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-        return NULL;
-    }
-}
-
-static void metal_pass_destroy(pl_gpu gpu, pl_pass pass)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
-    }
-}
-
-static void metal_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
-{
-    @autoreleasepool {
-        unimplemented(gpu, __func__);
     }
 }
 
@@ -242,6 +215,10 @@ pl_gpu pl_gpu_create_metal(pl_log log, pl_metal mtl, id<MTLDevice> device,
     gpu->glsl = metal_glsl();
     gpu->limits = metal_limits(device, caps);
     metal_setup_formats(gpu);
+    if (!metal_pass_init(gpu)) {
+        metal_gpu_destroy(gpu);
+        return NULL;
+    }
 
     PL_INFO(gpu, "Metal device: %s, MTLGPUFamilyApple%d%s", device.name.UTF8String,
             caps.apple_family, max_apple_family ? " (capped)" : "");

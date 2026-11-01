@@ -79,7 +79,8 @@ pl_buf metal_buf_create(pl_gpu gpu, const struct pl_buf_params *params)
         buf->params.initial_data = NULL;
         struct pl_buf_mtl *buf_mtl = PL_PRIV(buf);
 
-        bool host = params->host_mapped || params->host_writable || params->host_readable;
+        bool host = params->host_mapped || params->host_writable ||
+                    params->host_readable || params->uniform;
         MTLResourceOptions options = host ? MTLResourceStorageModeShared
                                           : MTLResourceStorageModePrivate;
         const void *data = host ? params->initial_data : NULL;

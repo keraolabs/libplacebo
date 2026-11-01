@@ -3,13 +3,18 @@ metal_dep = dependency('appleframeworks', modules: ['Metal', 'Foundation'],
                        required: metal)
 metal = metal.require(metal_dep.found(),
                       error_message: 'Metal requires the Metal framework')
+spirv_cross_dep = dependency('spirv-cross-c', method: 'pkg-config', required: metal)
+metal = metal.require(spirv_cross_dep.found(),
+                      error_message: 'Metal requires SPIRV-Cross')
+metal = metal.require(components.get('glslang', false),
+                      error_message: 'Metal requires glslang')
 metal = metal.require(add_languages('objc', native: false, required: metal),
                       error_message: 'Metal requires an Objective-C compiler')
 
 components.set('metal', metal.allowed())
 if metal.allowed()
   add_project_arguments(build_opts + c_opts + ['-fobjc-arc'], language: 'objc')
-  build_deps += metal_dep
+  build_deps += [metal_dep, spirv_cross_dep]
   tests += 'metal.c'
   sources += [
     'metal/context.m',
@@ -17,6 +22,7 @@ if metal.allowed()
     'metal/formats.m',
     'metal/gpu.m',
     'metal/gpu_buf.m',
+    'metal/gpu_pass.m',
     'metal/gpu_tex.m',
   ]
 else

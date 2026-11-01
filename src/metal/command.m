@@ -20,6 +20,9 @@
 
 #define NS_PER_SEC 1e9
 
+// Size of the arena chunks shared by several copies
+#define ARENA_CHUNK_SIZE (64 * 1024)
+
 bool metal_gpu_usable(pl_gpu gpu)
 {
     struct pl_mtl *p = PL_PRIV(gpu);
@@ -66,6 +69,36 @@ void metal_cmd_callback(struct metal_cmd *cmd, void (*run)(void *priv), void *pr
         .run = run,
         .priv = priv,
     });
+}
+
+void metal_cmd_retain(struct metal_cmd *cmd, id obj)
+{
+    if (!cmd->objects)
+        cmd->objects = [[NSMutableArray alloc] init];
+    [cmd->objects addObject:obj];
+}
+
+struct metal_slice metal_cmd_copy(pl_gpu gpu, struct metal_cmd *cmd,
+                                  const void *data, size_t size)
+{
+    struct metal_arena *arena = &cmd->arena;
+    size_t padded = PL_ALIGN2(size, METAL_ARENA_ALIGN);
+    size_t offset = arena->used;
+    if (!arena->chunk || offset + padded > arena->chunk.length) {
+        arena->chunk = metal_new_buffer(gpu, NULL, PL_MAX(padded, ARENA_CHUNK_SIZE),
+                                        MTLResourceStorageModeShared |
+                                        MTLResourceCPUCacheModeWriteCombined);
+        if (!arena->chunk)
+            return (struct metal_slice) {0};
+        offset = 0;
+    }
+
+    memcpy((uint8_t *) arena->chunk.contents + offset, data, size);
+    arena->used = offset + padded;
+    return (struct metal_slice) {
+        .buf = arena->chunk,
+        .offset = offset,
+    };
 }
 
 static void cmd_completed(pl_gpu gpu, struct metal_cmd *cmd, id<MTLCommandBuffer> buf)
@@ -163,7 +196,8 @@ static void release_cmd(struct metal_cmd *cmd)
         cmd->callbacks.elem[i].run(cmd->callbacks.elem[i].priv);
 
     cmd->buf = nil;
-    cmd->arena.chunks = nil;
+    cmd->arena.chunk = nil;
+    cmd->objects = nil;
     pl_free(cmd);
 }
 

@@ -39,6 +39,22 @@
         BITS(bits, bits, bits, bits),           \
         IDX(0, 1, 2, 3))
 
+// Half float texture, uploaded from 32-bit floats
+#define EMUFMT(_name, num)                      \
+    (struct pl_fmt_t) {                         \
+        .name = _name,                          \
+        .type = PL_FMT_FLOAT,                   \
+        .num_components  = num,                 \
+        .component_depth = BITS(16, 16, 16, 16),\
+        .internal_size   = (num) * 2,           \
+        .opaque          = false,               \
+        .emulated        = true,                \
+        .texel_size      = (num) * 4,           \
+        .texel_align     = 4,                   \
+        .host_bits       = BITS(32, 32, 32, 32),\
+        .sample_order    = IDX(0, 1, 2, 3),     \
+    }
+
 #define ALL  (METAL_FMT_FILTER | METAL_FMT_COLOR | METAL_FMT_BLEND)
 #define ALL32 (METAL_FMT_FILTER32 | METAL_FMT_COLOR | METAL_FMT_BLEND)
 #define INT  METAL_FMT_COLOR
@@ -107,6 +123,11 @@ static const struct metal_format metal_formats[] = {
     {MTLPixelFormatBGR5A1Unorm,  NOV, ALL,
         FMT("bgr5a1",   4, 2, UNORM, BITS(5,  5,  5,  1), IDX(2, 1, 0, 3))},
 
+    // Sampled half floats for 32-bit float data, which only some devices filter
+    {MTLPixelFormatR16Float,    NOV, METAL_FMT_FILTER, EMUFMT("r16f",    1)},
+    {MTLPixelFormatRG16Float,   NOV, METAL_FMT_FILTER, EMUFMT("rg16f",   2)},
+    {MTLPixelFormatRGBA16Float, NOV, METAL_FMT_FILTER, EMUFMT("rgba16f", 4)},
+
     // Vertex formats without a pixel format
     {NOP, V(UChar3Normalized),  0, REGFMT("rgb8",    3,  8, UNORM)},
     {NOP, V(Char3Normalized),   0, REGFMT("rgb8s",   3,  8, SNORM)},
@@ -130,6 +151,7 @@ static const struct metal_format metal_formats[] = {
 #undef ALL32
 #undef ALL
 #undef REGFMT
+#undef EMUFMT
 #undef BITS
 #undef IDX
 #undef FMT
@@ -144,7 +166,9 @@ static enum pl_fmt_caps format_caps(const struct metal_format *mfmt,
 
     enum pl_fmt_caps ret = 0;
     if (mfmt->pixel != MTLPixelFormatInvalid)
-        ret |= PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_HOST_READABLE;
+        ret |= PL_FMT_CAP_SAMPLEABLE;
+    if (mfmt->pixel != MTLPixelFormatInvalid && !mfmt->fmt.emulated)
+        ret |= PL_FMT_CAP_HOST_READABLE;
     if (filter)
         ret |= PL_FMT_CAP_LINEAR;
     if (f & METAL_FMT_COLOR)

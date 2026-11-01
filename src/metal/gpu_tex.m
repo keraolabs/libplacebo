@@ -57,7 +57,7 @@ static void encode_tex_copy(struct metal_cmd *cmd, const struct pl_tex_transfer_
     struct pl_tex_mtl *tex_mtl = PL_PRIV(tex);
     int dims = pl_tex_params_dimension(tex->params);
     size_t row_pitch = dims > 1 ? params->row_pitch
-                                : pl_rect_w(params->rc) * tex->params.format->texel_size;
+                                : pl_rect_w(params->rc) * tex->params.format->internal_size;
     size_t image_pitch = dims > 2 ? params->depth_pitch : 0;
 
     id<MTLBlitCommandEncoder> enc = [cmd->buf blitCommandEncoder];
@@ -85,9 +85,78 @@ static void encode_tex_copy(struct metal_cmd *cmd, const struct pl_tex_transfer_
     [enc endEncoding];
 }
 
+// Uploads the texture region of `params` from `staging`, with the pitches of
+// `params`
+static bool upload_staging(pl_gpu gpu, const struct pl_tex_transfer_params *params,
+                           id<MTLBuffer> staging)
+{
+    struct pl_tex_mtl *tex_mtl = PL_PRIV(params->tex);
+    struct metal_cmd *cmd = metal_cmd_begin(gpu);
+    if (!cmd)
+        return false;
+
+    encode_tex_copy(cmd, params, staging, 0, true);
+    metal_cmd_use(cmd, &tex_mtl->last_use);
+    if (params->callback)
+        metal_cmd_callback(cmd, params->callback, params->priv);
+    metal_cmd_end(gpu, cmd);
+    return true;
+}
+
+// Returns the 32-bit floats of an upload to an emulated format as half
+// floats, tightly packed, and sets the pitches of `params` to theirs
+static id<MTLBuffer> convert_to_half(pl_gpu gpu, struct pl_tex_transfer_params *params,
+                                     const uint8_t *src)
+{
+    pl_fmt fmt = params->tex->params.format;
+    int h = pl_rect_h(params->rc), d = pl_rect_d(params->rc);
+    size_t row = pl_rect_w(params->rc) * fmt->internal_size;
+    size_t comps = pl_rect_w(params->rc) * fmt->num_components;
+    id<MTLBuffer> staging = metal_new_buffer(gpu, NULL, row * h * d,
+                                             MTLResourceStorageModeShared);
+    if (!staging)
+        return nil;
+
+    _Float16 *dst = staging.contents;
+    for (int z = 0; z < d; z++) {
+        for (int y = 0; y < h; y++) {
+            const uint8_t *line = src + z * params->depth_pitch + y * params->row_pitch;
+            for (size_t i = 0; i < comps; i++) {
+                float value;
+                memcpy(&value, line + i * sizeof(float), sizeof(float));
+                *dst++ = (_Float16) value;
+            }
+        }
+    }
+
+    params->row_pitch = row;
+    params->depth_pitch = row * h;
+    return staging;
+}
+
+// Converts on the CPU, so the source buffer must be host-visible
+static bool upload_emulated(pl_gpu gpu, const struct pl_tex_transfer_params *params)
+{
+    const uint8_t *src = params->ptr;
+    if (params->buf) {
+        struct pl_buf_mtl *buf_mtl = PL_PRIV(params->buf);
+        if (buf_mtl->buf.storageMode != MTLStorageModeShared) {
+            PL_ERR(gpu, "Metal: uploads to '%s' textures need a host-visible buffer",
+                   params->tex->params.format->name);
+            return false;
+        }
+        while (metal_poll(gpu, &buf_mtl->last_use, UINT64_MAX))
+            ;
+        src = (const uint8_t *) buf_mtl->buf.contents + params->buf_offset;
+    }
+
+    struct pl_tex_transfer_params staged = *params;
+    id<MTLBuffer> staging = convert_to_half(gpu, &staged, src);
+    return staging && upload_staging(gpu, &staged, staging);
+}
+
 static bool upload_initial_data(pl_gpu gpu, pl_tex tex, const void *data)
 {
-    struct pl_tex_mtl *tex_mtl = PL_PRIV(tex);
     struct pl_tex_transfer_params params = {
         .tex = tex,
         .rc = {
@@ -96,22 +165,15 @@ static bool upload_initial_data(pl_gpu gpu, pl_tex tex, const void *data)
             .z1 = PL_MAX(tex->params.d, 1),
         },
         .row_pitch = tex->params.w * tex->params.format->texel_size,
+        .ptr = (void *) data,
     };
     params.depth_pitch = pl_rect_h(params.rc) * params.row_pitch;
+    if (tex->params.format->emulated)
+        return upload_emulated(gpu, &params);
 
     size_t size = pl_tex_transfer_size(&params);
     id<MTLBuffer> staging = metal_new_buffer(gpu, data, size, MTLResourceStorageModeShared);
-    if (!staging)
-        return false;
-
-    struct metal_cmd *cmd = metal_cmd_begin(gpu);
-    if (!cmd)
-        return false;
-
-    encode_tex_copy(cmd, &params, staging, 0, true);
-    metal_cmd_use(cmd, &tex_mtl->last_use);
-    metal_cmd_end(gpu, cmd);
-    return true;
+    return staging && upload_staging(gpu, &params, staging);
 }
 
 void metal_tex_destroy(pl_gpu gpu, pl_tex tex)
@@ -292,6 +354,8 @@ bool metal_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
     @autoreleasepool {
         if (!metal_gpu_usable(gpu))
             return false;
+        if (params->tex->params.format->emulated)
+            return upload_emulated(gpu, params);
         if (!params->buf)
             return pl_tex_upload_pbo(gpu, params);
         return transfer(gpu, params, true);

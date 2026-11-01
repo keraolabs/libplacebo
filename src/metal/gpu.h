@@ -20,12 +20,16 @@
 #import <Metal/Metal.h>
 
 #include "../gpu.h"
+#include "../glsl/spirv.h"
 #include "../pl_thread.h"
 
 #include <libplacebo/metal.h>
 
 // Lowest supported Apple GPU family: A12, the GPU floor of iOS 17
 #define METAL_MIN_APPLE_FAMILY 5
+
+// Largest size of data set with `setVertexBytes` and `setFragmentBytes`
+#define METAL_MAX_SET_BYTES 4096
 
 // Device capabilities, capped by `pl_metal_params.max_apple_family`
 struct metal_caps {
@@ -54,11 +58,11 @@ struct metal_callback {
 };
 
 // Storage owned by one command buffer for data copied at encode time, so
-// that the caller may change its copy once the encode returns. Released when
-// the command buffer is retired.
+// that the caller may change its copy once the encode returns. The command
+// buffer retains every chunk it encodes, until it is retired.
 struct metal_arena {
-    NSMutableArray<id<MTLBuffer>> *chunks; // Shared storage, the last one filling
-    size_t used;                           // bytes used in the last chunk
+    id<MTLBuffer> chunk; // Shared storage, being filled
+    size_t used;         // bytes used in `chunk`
 };
 
 struct metal_cmd {
@@ -66,8 +70,15 @@ struct metal_cmd {
     uint64_t seq;
     int num_encodes;
     struct metal_arena arena;
+    NSMutableArray *objects; // other objects encoded, kept until retired
     PL_ARRAY(struct metal_callback) callbacks;
     bool done; // under `done_lock`
+};
+
+// A range of a buffer
+struct metal_slice {
+    id<MTLBuffer> buf;
+    size_t offset;
 };
 
 struct pl_mtl {
@@ -76,6 +87,8 @@ struct pl_mtl {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
     struct metal_caps caps;
+    pl_spirv spirv;
+    id<MTLSamplerState> samplers[PL_TEX_SAMPLE_MODE_COUNT][PL_TEX_ADDRESS_MODE_COUNT];
 
     // Recursive, taken before `lock`. Held to retire command buffers and run
     // their callbacks, which may call back into the `pl_gpu`.
@@ -120,7 +133,16 @@ bool metal_gpu_usable(pl_gpu gpu);
 struct metal_cmd *metal_cmd_begin(pl_gpu gpu);
 void metal_cmd_use(struct metal_cmd *cmd, _Atomic uint64_t *last_use);
 void metal_cmd_callback(struct metal_cmd *cmd, void (*run)(void *priv), void *priv);
+void metal_cmd_retain(struct metal_cmd *cmd, id obj);
 void metal_cmd_end(pl_gpu gpu, struct metal_cmd *cmd);
+
+// Copies `size` bytes of `data` into the arena of `cmd`. The slice's offset
+// is a multiple of METAL_ARENA_ALIGN, and its buffer extends at least to the
+// next multiple past the copy. Returns a slice with a nil buffer, logging an
+// error, on failure.
+#define METAL_ARENA_ALIGN 256
+struct metal_slice metal_cmd_copy(pl_gpu gpu, struct metal_cmd *cmd,
+                                  const void *data, size_t size);
 
 // Returns whether a resource with this `last_use` is still in use after
 // waiting up to `timeout` nanoseconds (UINT64_MAX: until it is not).
@@ -152,3 +174,12 @@ void metal_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params);
 bool metal_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params);
 bool metal_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params);
 bool metal_tex_poll(pl_gpu gpu, pl_tex tex, uint64_t timeout);
+
+// Creates the shader compiler and sampler states, or logs an error and
+// returns false. `metal_pass_uninit` is safe after a failure.
+bool metal_pass_init(pl_gpu gpu);
+void metal_pass_uninit(pl_gpu gpu);
+
+pl_pass metal_pass_create(pl_gpu gpu, const struct pl_pass_params *params);
+void metal_pass_destroy(pl_gpu gpu, pl_pass pass);
+void metal_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params);
