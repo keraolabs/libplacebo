@@ -21,6 +21,11 @@ void set_flag(void *priv);
 void *gate_close(pl_metal mtl);
 void gate_open(void *gate);
 
+// Runs every Metal test on the system default device, printing the result
+// lines kerao/test.py reads. Returns 0 when all passed; any failure exits the
+// process. Needs MTL_DEBUG_LAYER=1 in the environment.
+int metal_tests(void);
+
 void metal_translation_tests(pl_gpu gpu);
 void metal_snapshot_tests(pl_metal mtl);
 void metal_emulated_format_tests(pl_gpu gpu);

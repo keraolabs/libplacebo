@@ -19,6 +19,12 @@ foreach t : tests
   env = {}
   if t == 'metal.c'
     sources += 'metal_pass.c'
+    if host_machine.subsystem() == 'ios'
+      sources += 'metal_app.m'
+      deps += dependency('appleframeworks', modules: ['UIKit'])
+    else
+      sources += 'metal_main.c'
+    endif
     env = { 'MTL_DEBUG_LAYER': '1' }
   endif
   ts += { 'test': t,

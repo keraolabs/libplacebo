@@ -13,8 +13,9 @@
 #define MAX_TEX_3D_DIM          2048
 #define MAX_SET_BYTES           4096
 
-// kerao/test.py reads these lines: one `config <name> Apple<family>` for each
-// configuration whose tests all passed, then `end <configurations>` last
+// kerao/test.py reads these lines: `validation MTL_DEBUG_LAYER=<value>` first,
+// one `config <name> Apple<family>` for each configuration whose tests all
+// passed, then `end <configurations>` last
 #define RESULT_PREFIX "kerao-metal-test"
 
 // Capabilities the feature set tables give a device configuration
@@ -552,12 +553,13 @@ static void metal_teardown(pl_metal *mtl)
     REQUIRE(!*mtl);
 }
 
-int main()
+int metal_tests(void)
 {
     const char *validation = getenv("MTL_DEBUG_LAYER");
     REQUIRE(validation && strcmp(validation, "1") == 0);
 
     pl_log log = pl_test_logger();
+    printf(RESULT_PREFIX " validation MTL_DEBUG_LAYER=%s\n", validation);
 
     pl_metal native = pl_metal_create(log, NULL);
     REQUIRE(native);
@@ -618,4 +620,5 @@ int main()
     metal_teardown(&native);
     pl_log_destroy(&log);
     printf(RESULT_PREFIX " end %d\n", (int) PL_ARRAY_SIZE(configs));
+    return 0;
 }
