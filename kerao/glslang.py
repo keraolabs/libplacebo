@@ -4,6 +4,7 @@ from pathlib import Path
 
 from common import (
     MACOS,
+    PKGCONFIG_DIR,
     BuildError,
     Check,
     Slice,
@@ -23,8 +24,9 @@ from macho import (
     read_archive_builds,
     read_archs,
     read_build_versions,
+    read_exports,
 )
-from toolchain import cmake_build, compiler, read_sdk
+from toolchain import cmake_build, link_archives, read_sdk
 
 OPTIONS = (
     "-DBUILD_SHARED_LIBS=OFF",
@@ -49,14 +51,12 @@ def link_dylib(
     slice_: Slice, sdk_path: Path, archives: list[Path], dylib: Path
 ) -> None:
     """Link every object of archives into dylib, which loads as INSTALL_NAME."""
-    capture(
-        [
-            *compiler(slice_, sdk_path, "clang++"),
-            "-dynamiclib",
-            *(f"-Wl,-force_load,{archive}" for archive in archives),
-            *("-install_name", INSTALL_NAME, "-Wl,-headerpad_max_install_names"),
-            *("-o", str(dylib)),
-        ]
+    link_archives(
+        slice_,
+        sdk_path,
+        archives,
+        dylib,
+        *("-install_name", INSTALL_NAME, "-Wl,-headerpad_max_install_names"),
     )
 
 
@@ -94,10 +94,6 @@ def read_external_definitions(archive: Path) -> frozenset[str]:
         for line in output.splitlines()
         if (match := EXTERNAL_DEFINITION.fullmatch(line))
     )
-
-
-def read_exports(binary: Path) -> frozenset[str]:
-    return frozenset(capture(["xcrun", "nm", "-g", "-U", "-j", str(binary)]).split())
 
 
 def check_no_symbols(what: str, symbols: list[str], pattern: re.Pattern[str]) -> Check:
@@ -148,10 +144,10 @@ def build_glslang(
     )
     archives = [install / "lib" / name for name in ARCHIVES]
     shutil.copytree(install / "include" / "glslang", prefix / "include" / "glslang")
-    (prefix / "lib" / "pkgconfig").mkdir(parents=True)
+    (prefix / PKGCONFIG_DIR).mkdir(parents=True)
     dylib = prefix / "lib" / DYLIB
     link_dylib(slice_, sdk_path, archives, dylib)
-    (prefix / "lib" / "pkgconfig" / PKGCONFIG).write_text(
+    (prefix / PKGCONFIG_DIR / PKGCONFIG).write_text(
         pkgconfig(prefix, read_version(install / BUILD_INFO))
     )
     objects = [

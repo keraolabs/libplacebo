@@ -3,12 +3,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from checkout import fake_git, git
-from common import Check, Slice, capture, counterexample, scoped
+from common import PKGCONFIG_DIR, Check, Slice, capture, counterexample, scoped
 from glslang import build_glslang
 from spirv_cross import build_spirv_cross
 from toolchain import NATIVE_FILE, meson_native_file
-
-PKGCONFIG_DIR = Path("lib") / "pkgconfig"
 
 Builder = Callable[[Slice, Path, Path, Path, Path], list[Check]]
 

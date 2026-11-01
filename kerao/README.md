@@ -83,12 +83,13 @@ Unknown or missing arguments exit with status 2. A build runs every check before
   lib/libspirv-cross-msl.a
   lib/libspirv-cross-c.a
   lib/pkgconfig/glslang.pc
+  lib/pkgconfig/spirv-cross-c.pc
   native.ini
 ```
 
 The slice is `arm64-apple-macos14.0`. Every binary holds only arm64 and is built for macOS 14.0.
 
-`native.ini` is a meson native file for the slice. Its `c`, `cpp` and `objc` compilers are `xcrun --sdk macosx clang` with `-target arm64-apple-macos14.0` and `--sysroot` set to the SDK `xcrun` reports, and its `pkg_config_libdir` is only the `lib/pkgconfig` directory beside it, so meson finds glslang there and never a package of the host. It leaves `c_args`, `cpp_args` and the link arguments free, so a second `--native-file` given before it can add them.
+`native.ini` is a meson native file for the slice. Its `c`, `cpp` and `objc` compilers are `xcrun --sdk macosx clang` with `-target arm64-apple-macos14.0` and `--sysroot` set to the SDK `xcrun` reports, and its `pkg_config_libdir` is only the `lib/pkgconfig` directory beside it, so meson finds glslang and SPIRV-Cross there and never a package of the host. It leaves `c_args`, `cpp_args` and the link arguments free, so a second `--native-file` given before it can add them.
 
 ### Self-test
 
@@ -118,6 +119,10 @@ glslang compiles in `SPIRV/hex_float.h` and `SPIRV/bitutils.h`, which are under 
 #### SPIRV-Cross
 
 SPIRV-Cross is built as the static libraries the C API and MSL output use: `spirv-cross-core`, `spirv-cross-glsl`, `spirv-cross-msl` and `spirv-cross-c`, with HLSL, C++, reflection, util, the CLI and tests off. libplacebo links them statically under MIT.
+
+`spirv-cross-c.pc` is the script's own: it names the four libraries in link order and `include/spirv_cross` as the header directory, and the Metal backend takes SPIRV-Cross only as this pkg-config package. Upstream's static `spirv-cross-c.pc` names only `spirv-cross-c`. The build checks that pkg-config, finding packages only in `lib/pkgconfig`, gives `-l` and `-L` flags reaching all four archives and an `-I` directory holding `spirv_cross_c.h`.
+
+SPIRV-Cross is compiled with `-fvisibility=hidden -fvisibility-inlines-hidden`, so libplacebo's dylib exports none of its symbols. Apple's linker has no `--exclude-libs`, and an object compiled with default visibility keeps its symbols exported from any dylib it is linked into. The build links every object of the four archives into a probe dylib and fails if it exports any symbol.
 
 The build passes `-UHAVE_SPIRV_CROSS_GIT_VERSION`, so the C API does not compile the generated `gitversion.h`, whose template `cmake/gitversion.in.h` is under Apache-2.0 alone. `spvc_get_commit_revision_and_timestamp()` returns an empty string instead.
 

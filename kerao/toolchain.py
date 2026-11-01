@@ -66,6 +66,21 @@ def compiler(slice_: Slice, sdk_path: Path, name: str) -> list[str]:
     return [*tool(slice_, name), "-target", slice_.target, "--sysroot", str(sdk_path)]
 
 
+def link_archives(
+    slice_: Slice, sdk_path: Path, archives: list[Path], dylib: Path, *flags: str
+) -> None:
+    """Link every object of archives, with flags, into dylib."""
+    capture(
+        [
+            *compiler(slice_, sdk_path, "clang++"),
+            "-dynamiclib",
+            *(f"-Wl,-force_load,{archive}" for archive in archives),
+            *flags,
+            *("-o", str(dylib)),
+        ]
+    )
+
+
 def meson_literal(values: list[str]) -> str:
     quoted = (value.replace("\\", "\\\\").replace("'", "\\'") for value in values)
     return "[" + ", ".join(f"'{value}'" for value in quoted) + "]"

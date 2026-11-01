@@ -55,6 +55,10 @@ def read_archs(path: Path) -> tuple[str, ...]:
     return tuple(capture(["xcrun", "lipo", "-archs", str(path)]).split())
 
 
+def read_exports(binary: Path) -> frozenset[str]:
+    return frozenset(capture(["xcrun", "nm", "-g", "-U", "-j", str(binary)]).split())
+
+
 def describe_builds(builds: BuildVersions) -> str:
     return (
         ", ".join(f"platform {number} minos {minos}" for number, minos in builds)
