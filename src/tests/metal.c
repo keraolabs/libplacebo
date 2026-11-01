@@ -13,6 +13,10 @@
 #define MAX_TEX_3D_DIM          2048
 #define MAX_SET_BYTES           4096
 
+// kerao/test.py reads these lines: one `config <name> Apple<family>` for each
+// configuration whose tests all passed, then `end <configurations>` last
+#define RESULT_PREFIX "kerao-metal-test"
+
 // Capabilities the feature set tables give a device configuration
 struct expected {
     int apple_family;
@@ -582,18 +586,30 @@ int main()
     metal_format_tests(apple5->gpu, apple5_exp);
     require_caps_within(apple5->gpu, native->gpu);
 
-    pl_metal configs[] = { native, apple5 };
+    const struct {
+        const char *name;
+        pl_metal mtl;
+        int apple_family;
+    } configs[] = {
+        { "native", native, native_exp.apple_family },
+        { "Apple5", apple5, APPLE5 },
+    };
+
     for (int i = 0; i < PL_ARRAY_SIZE(configs); i++) {
-        pl_gpu gpu = configs[i]->gpu;
+        pl_metal mtl = configs[i].mtl;
+        pl_gpu gpu = mtl->gpu;
         metal_translation_tests(gpu);
-        metal_snapshot_tests(configs[i]);
+        metal_snapshot_tests(mtl);
         metal_emulated_format_tests(gpu);
         gpu_shader_tests(gpu);
         metal_clear_blit_tests(gpu);
         metal_buf_transfer_tests(gpu);
-        metal_buf_in_use_tests(configs[i]);
-        metal_destroy_in_use_tests(configs[i]);
-        metal_concurrency_tests(configs[i]);
+        metal_buf_in_use_tests(mtl);
+        metal_destroy_in_use_tests(mtl);
+        metal_concurrency_tests(mtl);
+        REQUIRE(!pl_gpu_is_failed(gpu));
+        printf(RESULT_PREFIX " config %s Apple%d\n", configs[i].name,
+               configs[i].apple_family);
     }
 
     metal_failure_tests(native->device);
@@ -601,4 +617,5 @@ int main()
     metal_teardown(&apple5);
     metal_teardown(&native);
     pl_log_destroy(&log);
+    printf(RESULT_PREFIX " end %d\n", (int) PL_ARRAY_SIZE(configs));
 }
