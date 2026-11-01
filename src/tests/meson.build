@@ -26,13 +26,7 @@ if dav1d.found()
   ts += { 'test': 'dav1d.c', 'deps': [dav1d, tdep_shared] }
 endif
 
-lavu = dependency('libavutil', version: '>=55.74.100', required: false)
-lavc = dependency('libavcodec', required: false)
-lavf = dependency('libavformat', required: false)
-libav_found = lavu.found() and lavc.found() and lavf.found()
-if libav_found
-  ts += { 'test': 'libav.c', 'deps': [lavu, lavc, lavf, tdep_shared] }
-endif
+ts += { 'test': 'libav.c', 'deps': [lavu, tdep_shared] }
 
 foreach t : ts
   e = executable('test.' + t['test'], [t['test']] + t.get('sources', []),
