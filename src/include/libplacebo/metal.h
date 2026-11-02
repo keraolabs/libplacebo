@@ -62,6 +62,25 @@ PL_API void pl_metal_destroy(pl_metal *mtl);
 // for any other type of `gpu`.
 PL_API pl_metal pl_metal_get(pl_gpu gpu);
 
+// IOSurface import: `pl_gpu.import_caps.tex` is PL_HANDLE_IOSURFACE. To
+// import one plane of an IOSurface with `pl_tex_create`, set `import_handle`
+// to PL_HANDLE_IOSURFACE, `shared_mem.handle.handle` to the `IOSurfaceRef`
+// and `shared_mem.plane` to the plane. The texture must be 2D, and its
+// format must not be `emulated`. The plane's width and height must equal `w`
+// and `h`, its bytes per element must equal the format's `texel_size`, and
+// its bytes per row must be at least `w * texel_size` and a multiple of the
+// device's `minimumLinearTextureAlignmentForPixelFormat:`. Otherwise
+// `pl_tex_create` logs the mismatch and returns NULL. Whether the surface's
+// pixel format matches `format` is up to the caller.
+//
+// The texture retains the IOSurface, so the caller may release its own
+// reference after `pl_tex_create`, and `pl_tex_destroy` is safe while the GPU
+// still uses the texture. That retain does not stop a pool from reusing the
+// surface and overwriting its contents, and GPU access does not count towards
+// the IOSurface's use count: the caller must keep the owner of the image
+// contents (e.g. the `CVPixelBuffer` or the `AVFrame`) until `pl_tex_poll`
+// reports the texture idle.
+
 PL_API_END
 
 #endif // LIBPLACEBO_METAL_H_

@@ -17,6 +17,8 @@
 
 #include "formats.h"
 
+#import <IOSurface/IOSurfaceRef.h>
+
 static MTLTextureType texture_type(const struct pl_tex_params *params)
 {
     switch (pl_tex_params_dimension(*params)) {
@@ -176,6 +178,87 @@ static bool upload_initial_data(pl_gpu gpu, pl_tex tex, const void *data)
     return staging && upload_staging(gpu, &params, staging);
 }
 
+// Returns whether `plane` of `surface` has the layout of a texture with
+// `params` and `pixel`, logging the mismatch if not
+static bool check_plane_layout(pl_gpu gpu, const struct pl_tex_params *params,
+                               IOSurfaceRef surface, unsigned plane, MTLPixelFormat pixel)
+{
+    pl_fmt fmt = params->format;
+    size_t w = IOSurfaceGetWidthOfPlane(surface, plane);
+    size_t h = IOSurfaceGetHeightOfPlane(surface, plane);
+    size_t bpe = IOSurfaceGetBytesPerElementOfPlane(surface, plane);
+    size_t bpr = IOSurfaceGetBytesPerRowOfPlane(surface, plane);
+    if (w != params->w || h != params->h) {
+        PL_ERR(gpu, "Metal: IOSurface plane %u is %zux%zu, not %dx%d",
+               plane, w, h, params->w, params->h);
+        return false;
+    }
+    if (bpe != fmt->texel_size) {
+        PL_ERR(gpu, "Metal: IOSurface plane %u has %zu bytes per element, "
+               "format '%s' has %zu", plane, bpe, fmt->name, fmt->texel_size);
+        return false;
+    }
+    if (bpr < w * bpe) {
+        PL_ERR(gpu, "Metal: IOSurface plane %u has %zu bytes per row, "
+               "below its width of %zu bytes", plane, bpr, w * bpe);
+        return false;
+    }
+
+    struct pl_mtl *p = PL_PRIV(gpu);
+    size_t align = [p->device minimumLinearTextureAlignmentForPixelFormat:pixel];
+    if (bpr % align) {
+        PL_ERR(gpu, "Metal: IOSurface plane %u has %zu bytes per row, "
+               "not a multiple of %zu", plane, bpr, align);
+        return false;
+    }
+
+    return true;
+}
+
+// Returns whether the IOSurface plane named by `params` can back a texture
+// with `params` and `pixel`, logging the mismatch if not
+static bool check_iosurface(pl_gpu gpu, const struct pl_tex_params *params,
+                            MTLPixelFormat pixel)
+{
+    IOSurfaceRef surface = params->shared_mem.handle.handle;
+    unsigned plane = params->shared_mem.plane;
+    if (!surface) {
+        PL_ERR(gpu, "Metal: IOSurface import without an IOSurfaceRef");
+        return false;
+    }
+    if (pl_tex_params_dimension(*params) != 2) {
+        PL_ERR(gpu, "Metal: IOSurfaces can only be imported as 2D textures");
+        return false;
+    }
+    if (params->format->emulated) {
+        PL_ERR(gpu, "Metal: IOSurfaces cannot be imported as emulated format '%s'",
+               params->format->name);
+        return false;
+    }
+
+    size_t planes = PL_MAX(IOSurfaceGetPlaneCount(surface), 1);
+    if (plane >= planes) {
+        PL_ERR(gpu, "Metal: IOSurface plane %u does not exist, the surface has %zu",
+               plane, planes);
+        return false;
+    }
+
+    return check_plane_layout(gpu, params, surface, plane, pixel);
+}
+
+static id<MTLTexture> import_iosurface(pl_gpu gpu, const struct pl_tex_params *params,
+                                       MTLTextureDescriptor *desc)
+{
+    if (!check_iosurface(gpu, params, desc.pixelFormat))
+        return nil;
+
+    struct pl_mtl *p = PL_PRIV(gpu);
+    desc.storageMode = MTLStorageModeShared;
+    return [p->device newTextureWithDescriptor:desc
+                                     iosurface:params->shared_mem.handle.handle
+                                         plane:params->shared_mem.plane];
+}
+
 void metal_tex_destroy(pl_gpu gpu, pl_tex tex)
 {
     @autoreleasepool {
@@ -216,7 +299,8 @@ pl_tex metal_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
         desc.usage = texture_usage(&tex->params);
 
         struct pl_mtl *p = PL_PRIV(gpu);
-        tex_mtl->tex = [p->device newTextureWithDescriptor:desc];
+        tex_mtl->tex = params->import_handle ? import_iosurface(gpu, params, desc)
+                                             : [p->device newTextureWithDescriptor:desc];
         if (!tex_mtl->tex) {
             PL_ERR(gpu, "Metal: failed creating a %dx%dx%d '%s' texture",
                    params->w, params->h, params->d, params->format->name);

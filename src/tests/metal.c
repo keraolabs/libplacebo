@@ -109,7 +109,8 @@ static void metal_limits_tests(pl_metal mtl, struct expected exp)
         REQUIRE(is_multiple(lim->align_tex_xfer_offset, fmt->texel_size));
     }
 
-    REQUIRE(!gpu->import_caps.tex && !gpu->import_caps.buf && !gpu->import_caps.sync);
+    REQUIRE_CMP(gpu->import_caps.tex, ==, (pl_handle_caps) PL_HANDLE_IOSURFACE, PRIx64);
+    REQUIRE(!gpu->import_caps.buf && !gpu->import_caps.sync);
     REQUIRE(!gpu->export_caps.tex && !gpu->export_caps.buf && !gpu->export_caps.sync);
 }
 
@@ -597,6 +598,11 @@ int metal_tests(void)
         { "Apple5", apple5, APPLE5 },
     };
 
+    const char *rounding_names[] = {
+        [HALF_TOWARD_ZERO]  = "toward zero",
+        [HALF_NEAREST_EVEN] = "to nearest even",
+    };
+    enum half_rounding rounding = HALF_TOWARD_ZERO;
     for (int i = 0; i < PL_ARRAY_SIZE(configs); i++) {
         pl_metal mtl = configs[i].mtl;
         pl_gpu gpu = mtl->gpu;
@@ -609,6 +615,10 @@ int metal_tests(void)
         metal_buf_in_use_tests(mtl);
         metal_destroy_in_use_tests(mtl);
         metal_concurrency_tests(mtl);
+        enum half_rounding config_rounding = metal_iosurface_tests(gpu);
+        REQUIRE(i == 0 || config_rounding == rounding);
+        rounding = config_rounding;
+        printf("RGhA render targets round %s\n", rounding_names[rounding]);
         REQUIRE(!pl_gpu_is_failed(gpu));
         printf(RESULT_PREFIX " config %s Apple%d\n", configs[i].name,
                configs[i].apple_family);

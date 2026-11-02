@@ -29,3 +29,11 @@ int metal_tests(void);
 void metal_translation_tests(pl_gpu gpu);
 void metal_snapshot_tests(pl_metal mtl);
 void metal_emulated_format_tests(pl_gpu gpu);
+
+enum half_rounding {
+    HALF_TOWARD_ZERO,
+    HALF_NEAREST_EVEN,
+};
+
+// Returns how the device rounds floats rendered to half float targets
+enum half_rounding metal_iosurface_tests(pl_gpu gpu);
