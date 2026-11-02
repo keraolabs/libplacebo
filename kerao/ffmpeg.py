@@ -3,13 +3,22 @@ import hashlib
 import json
 from pathlib import Path
 
-from common import SLICES, BuildError, Check, Slice, counterexample, listed
+from common import (
+    ARTIFACT_FIELDS,
+    SLICES,
+    BuildError,
+    Check,
+    Slice,
+    counterexample,
+    listed,
+)
 
 FFMPEG_TAG = "n9.0.2-kerao.1"
 FFMPEG_COMMIT = "ae49c6ac4a2409553ca0f9a00f9e252cbce632a0"
 LINKED = ("libavutil", "libavcodec")
 ARTIFACT_JSON = "artifact.json"
 RECORD_SHAPE = {
+    **dict.fromkeys(ARTIFACT_FIELDS, object),
     "libraries": [str],
     "repository": str,
     "tag": str,
@@ -189,7 +198,16 @@ def fake_ffmpeg(tmp: Path, **fields: object) -> FFmpeg:
         "tag": FFMPEG_TAG,
         "commit": FFMPEG_COMMIT,
         "mode": "release",
+        "dirty": False,
+        "built_at": "2026-11-01T16:11:11Z",
+        "xcode_build": "27A266a",
+        "sdks": {},
+        "tools": {},
+        "deps": [],
+        "inputs": [],
         "frameworks": frameworks,
+        "configure": {},
+        "unverified": [],
         **fields,
     }
     (root / ARTIFACT_JSON).write_text(json.dumps(record))
@@ -236,3 +254,10 @@ def ffmpeg_framework_record_without_slices(tmp: Path) -> tuple[Check, Check]:
         check_ffmpeg_record(record),
         check_ffmpeg_record({**record, "frameworks": [{}]}),
     )
+
+
+@counterexample
+def ffmpeg_artifact_without_unverified(tmp: Path) -> tuple[Check, Check]:
+    record = fake_ffmpeg(tmp).record
+    without = {key: value for key, value in record.items() if key != "unverified"}
+    return check_ffmpeg_record(record), check_ffmpeg_record(without)

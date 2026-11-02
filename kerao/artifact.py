@@ -4,30 +4,21 @@ from pathlib import Path
 
 import checkout
 import ffmpeg
-from common import FRAMEWORKS, SLICES, Check, Slice, counterexample, listed
+from common import (
+    ARTIFACT_FIELDS,
+    FRAMEWORKS,
+    SLICES,
+    Check,
+    Slice,
+    counterexample,
+    listed,
+)
 from deps import DEPS
 from framework import delivered_framework, framework_binary
 from toolchain import FAKE_TOOLCHAIN, TOOLS, Toolchain
 
 REPOSITORY = "https://github.com/keraolabs/libplacebo"
 DEP_FIELDS = ("name", "repository", "tag", "commit")
-ARTIFACT_FIELDS = (
-    "libraries",
-    "repository",
-    "tag",
-    "commit",
-    "mode",
-    "dirty",
-    "built_at",
-    "xcode_build",
-    "sdks",
-    "tools",
-    "deps",
-    "inputs",
-    "frameworks",
-    "configure",
-    "unverified",
-)
 
 
 def framework_records(output: Path, slices: tuple[Slice, ...]) -> list[dict]:

@@ -89,6 +89,23 @@ MACOS = Slice(
 SLICES = (IOS, IOS_SIMULATOR, MACOS)
 
 FRAMEWORKS = ("libplacebo", "libglslang")
+ARTIFACT_FIELDS = (
+    "libraries",
+    "repository",
+    "tag",
+    "commit",
+    "mode",
+    "dirty",
+    "built_at",
+    "xcode_build",
+    "sdks",
+    "tools",
+    "deps",
+    "inputs",
+    "frameworks",
+    "configure",
+    "unverified",
+)
 HEADER_DIRS = {"libplacebo": "libplacebo", "libglslang": "glslang"}
 
 
