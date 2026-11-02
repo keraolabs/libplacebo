@@ -8,6 +8,7 @@ from common import (
     BuildError,
     Check,
     Library,
+    Pin,
     Slice,
     capture,
     counterexample,
@@ -68,12 +69,12 @@ def read_version(build_info: Path) -> str:
     return f"{parts['MAJOR']}.{parts['MINOR']}.{parts['PATCH']}"
 
 
-def pkgconfig(prefix: Path, version: str) -> str:
+def pkgconfig(prefix: Path, version: str, pin: Pin) -> str:
     return f"""\
 prefix={prefix}
 libdir=${{prefix}}/lib
 includedir=${{prefix}}/include
-
+{pin.pkgconfig_variables()}
 Name: glslang
 Description: glslang, SPIRV and glslang-default-resource-limits in one library
 Version: {version}
@@ -144,7 +145,7 @@ def installed_library(prefix: Path) -> Library:
 
 
 def build_glslang(
-    slice_: Slice, sdk_path: Path, checkout: Path, work: Path, prefix: Path
+    slice_: Slice, sdk_path: Path, checkout: Path, work: Path, prefix: Path, pin: Pin
 ) -> list[Check]:
     """Install glslang's headers and libglslang.dylib under prefix."""
     _, install = cmake_build(
@@ -156,7 +157,7 @@ def build_glslang(
     dylib = prefix / "lib" / DYLIB
     link_dylib(slice_, sdk_path, archives, dylib)
     (prefix / PKGCONFIG_DIR / PKGCONFIG).write_text(
-        pkgconfig(prefix, read_version(install / BUILD_INFO))
+        pkgconfig(prefix, read_version(install / BUILD_INFO), pin)
     )
     objects = [
         member for archive in archives for member in read_archive_builds(archive)

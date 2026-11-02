@@ -593,9 +593,10 @@ int metal_tests(void)
         const char *name;
         pl_metal mtl;
         int apple_family;
+        int max_apple_family;
     } configs[] = {
-        { "native", native, native_exp.apple_family },
-        { "Apple5", apple5, APPLE5 },
+        { "native", native, native_exp.apple_family, 0 },
+        { "Apple5", apple5, APPLE5, APPLE5 },
     };
 
     const char *rounding_names[] = {
@@ -607,6 +608,7 @@ int metal_tests(void)
         pl_metal mtl = configs[i].mtl;
         pl_gpu gpu = mtl->gpu;
         metal_translation_tests(gpu);
+        metal_cache_tests(mtl, configs[i].max_apple_family);
         metal_snapshot_tests(mtl);
         metal_emulated_format_tests(gpu);
         gpu_shader_tests(gpu);
