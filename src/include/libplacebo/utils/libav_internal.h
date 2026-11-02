@@ -896,8 +896,8 @@ PL_LIBAV_API void pl_frame_from_avframe(struct pl_frame *out,
 }
 
 #if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(60, 15, 100)
-PL_LIBAV_API const uint8_t *pl_av_stream_get_side_data(const AVStream *st,
-                                                 enum AVPacketSideDataType type)
+static inline const uint8_t *pl_av_stream_get_side_data(const AVStream *st,
+                                                        enum AVPacketSideDataType type)
 {
     const AVPacketSideData *sd;
     sd = av_packet_side_data_get(st->codecpar->coded_side_data,

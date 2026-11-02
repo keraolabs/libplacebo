@@ -7,7 +7,6 @@ foreach h : headers
 
   if (h.contains('internal') or
       h.contains('dav1d') and not dav1d.found() or
-      h.contains('libav') and not libav_found or
       h.contains('d3d11') and not d3d11_header)
     continue
   endif
@@ -32,7 +31,7 @@ if cc.has_argument('-Wc23-extensions')
 endif
 
 static_library('test_include', test_include_sources,
-    dependencies: [tdep_static, lavu, lavc, lavf],
+    dependencies: [tdep_static],
     include_directories: [inc],
     implicit_include_directories: false,
     c_args: test_opts,

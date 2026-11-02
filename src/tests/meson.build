@@ -1,5 +1,5 @@
 gpu_tests = [
-  'vulkan.c', 'opengl_surfaceless.c', 'd3d11.c', 'dummy.c'
+  'vulkan.c', 'opengl_surfaceless.c', 'd3d11.c', 'metal.c', 'dummy.c'
 ]
 
 ts = []
@@ -16,9 +16,23 @@ foreach t : tests
   if gpu_tests.contains(t)
     sources += 'gpu_tests.c'
   endif
+  env = {}
+  if t == 'metal.c'
+    sources += ['metal_pass.c', 'metal_interop.c', 'metal_cache.c']
+    deps += dependency('appleframeworks',
+                       modules: ['CoreFoundation', 'CoreVideo', 'IOSurface'])
+    if host_machine.subsystem() == 'ios'
+      sources += 'metal_app.m'
+      deps += dependency('appleframeworks', modules: ['UIKit'])
+    else
+      sources += 'metal_main.c'
+    endif
+    env = { 'MTL_DEBUG_LAYER': '1' }
+  endif
   ts += { 'test': t,
           'sources': sources,
-          'deps': deps }
+          'deps': deps,
+          'env': env }
 endforeach
 
 dav1d = dependency('dav1d', required: false)
@@ -26,13 +40,7 @@ if dav1d.found()
   ts += { 'test': 'dav1d.c', 'deps': [dav1d, tdep_shared] }
 endif
 
-lavu = dependency('libavutil', version: '>=55.74.100', required: false)
-lavc = dependency('libavcodec', required: false)
-lavf = dependency('libavformat', required: false)
-libav_found = lavu.found() and lavc.found() and lavf.found()
-if libav_found
-  ts += { 'test': 'libav.c', 'deps': [lavu, lavc, lavf, tdep_shared] }
-endif
+ts += { 'test': 'libav.c', 'deps': [lavu, tdep_shared] }
 
 foreach t : ts
   e = executable('test.' + t['test'], [t['test']] + t.get('sources', []),
@@ -43,7 +51,7 @@ foreach t : ts
       link_depends: link_depends,
   )
 
-  test(t['test'], e, timeout: 120)
+  test(t['test'], e, timeout: 120, env: t.get('env', {}))
 endforeach
 
 subdir('include')
