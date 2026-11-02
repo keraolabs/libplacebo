@@ -9,8 +9,16 @@ FFMPEG_TAG = "n9.0.2-kerao.1"
 FFMPEG_COMMIT = "ae49c6ac4a2409553ca0f9a00f9e252cbce632a0"
 LINKED = ("libavutil", "libavcodec")
 ARTIFACT_JSON = "artifact.json"
-RECORD_FIELDS = ("libraries", "repository", "tag", "commit", "mode", "frameworks")
-SLICE_FIELDS = ("identifier", "path", "sha256")
+RECORD_SHAPE = {
+    "libraries": [str],
+    "repository": str,
+    "tag": str,
+    "commit": str,
+    "mode": str,
+    "frameworks": [
+        {"name": str, "slices": [{"identifier": str, "path": str, "sha256": str}]}
+    ],
+}
 INPUT_FIELDS = ("repository", "tag", "commit", "mode", "frameworks")
 
 
@@ -30,18 +38,36 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def record_problems(record: object) -> list[str]:
-    if not isinstance(record, dict):
-        return ["not a JSON object"]
-    problems = [f"no {field}" for field in RECORD_FIELDS if field not in record]
-    for framework in record.get("frameworks", []):
-        problems += [
-            f"{framework.get('name')} slice has no {field}"
-            for entry in framework.get("slices", [])
-            for field in SLICE_FIELDS
-            if field not in entry
+def shape_problems(value: object, shape: object, where: str) -> list[str]:
+    """Where value departs from shape: a type, [shape] for a list of shape, or
+    {key: shape} for an object with at least those keys."""
+    if isinstance(shape, dict):
+        if not isinstance(value, dict):
+            return [f"{where} is not an object"]
+        return [
+            problem
+            for key, inner in shape.items()
+            for problem in (
+                shape_problems(value[key], inner, f"{where}.{key}")
+                if key in value
+                else [f"{where} has no {key}"]
+            )
         ]
-    return problems
+    if isinstance(shape, list):
+        if not isinstance(value, list):
+            return [f"{where} is not a list"]
+        return [
+            problem
+            for index, item in enumerate(value)
+            for problem in shape_problems(item, shape[0], f"{where}[{index}]")
+        ]
+    return [] if isinstance(value, shape) else [f"{where} is not a {shape.__name__}"]
+
+
+def check_ffmpeg_record(record: object) -> Check:
+    """record is the parsed artifact.json of an FFmpeg output."""
+    problems = shape_problems(record, RECORD_SHAPE, ARTIFACT_JSON)
+    return Check("FFmpeg artifact.json", not problems, listed(problems))
 
 
 def read_ffmpeg(root: Path) -> FFmpeg:
@@ -50,9 +76,9 @@ def read_ffmpeg(root: Path) -> FFmpeg:
         record = json.loads(path.read_text())
     except (OSError, ValueError) as error:
         raise BuildError(f"cannot read {path}: {error}") from error
-    problems = record_problems(record)
-    if problems:
-        raise BuildError(f"{path}: {'; '.join(problems)}")
+    check = check_ffmpeg_record(record)
+    if not check.ok:
+        raise BuildError(f"{root}: {check.detail}")
     return FFmpeg(root=root, record=record)
 
 
@@ -201,3 +227,12 @@ def ffmpeg_binary_replaced(tmp: Path) -> tuple[Check, Check]:
     entry = ffmpeg.record["frameworks"][0]["slices"][0]
     (ffmpeg.root / entry["path"]).write_bytes(b"another build")
     return good, check_ffmpeg_binaries(ffmpeg)
+
+
+@counterexample
+def ffmpeg_framework_record_without_slices(tmp: Path) -> tuple[Check, Check]:
+    record = fake_ffmpeg(tmp).record
+    return (
+        check_ffmpeg_record(record),
+        check_ffmpeg_record({**record, "frameworks": [{}]}),
+    )
