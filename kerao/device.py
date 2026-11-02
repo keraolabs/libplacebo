@@ -9,8 +9,10 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
+import suite
 from checkout import UPSTREAM_VERSION
 from common import IOS, BuildError, Check, capture, counterexample
 from ffmpeg import FFmpeg, slice_dir
@@ -28,7 +30,7 @@ APP_VERSION = "1"
 APP_RPATH = "@executable_path/Frameworks"
 WILDCARD_APP_NAME = "kerao-metal-test"
 CHILD_ENVIRONMENT = {"DEVICECTL_CHILD_MTL_DEBUG_LAYER": "1"}
-RUN_TIMEOUT_SECONDS = 600
+RUN_TIMEOUT_SECONDS = 120
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,8 +92,17 @@ def check_device(listing: dict, udid: str) -> Check:
     )
 
 
-def check_unlocked(lock_state: dict) -> Check:
-    """lock_state is `devicectl device info lockState` JSON."""
+def check_unlocked(read_lock_state: Callable[[], dict]) -> Check:
+    """read_lock_state returns `devicectl device info lockState` JSON and raises
+    BuildError when devicectl cannot reach the device."""
+    try:
+        lock_state = read_lock_state()
+    except BuildError as error:
+        return Check(
+            UNLOCKED_CHECK,
+            False,
+            f"cannot reach the iPhone: {str(error).splitlines()[0]}",
+        )
     try:
         locked = lock_state["result"]["passcodeRequired"]
     except (KeyError, TypeError) as error:
@@ -109,8 +120,12 @@ def preconditions(udid: str) -> list[Check]:
     device = check_device(read_devicectl_json("list", "devices"), udid)
     if not device.ok:
         return [device]
-    lock_state = read_devicectl_json("device", "info", "lockState", "--device", udid)
-    return [device, check_unlocked(lock_state)]
+    return [
+        device,
+        check_unlocked(
+            lambda: read_devicectl_json("device", "info", "lockState", "--device", udid)
+        ),
+    ]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -364,9 +379,63 @@ def device_not_listed(tmp: Path) -> tuple[Check, Check]:
     )
 
 
+def fake_lock_state(passcode_required: bool) -> Callable[[], dict]:
+    return lambda: {"result": {"passcodeRequired": passcode_required}}
+
+
+def unreachable_lock_state() -> dict:
+    raise BuildError(
+        "xcrun devicectl device info lockState failed: ERROR: The device is not "
+        "able to fulfill the requested usage assertion requirements. "
+        "(com.apple.dt.CoreDeviceError error 4016 (0xFB0))\n"
+        "       CurrentlyAssertableStates = (\n       )"
+    )
+
+
 @counterexample
 def device_locked(tmp: Path) -> tuple[Check, Check]:
-    def check(passcode_required: bool) -> Check:
-        return check_unlocked({"result": {"passcodeRequired": passcode_required}})
+    return check_unlocked(fake_lock_state(False)), check_unlocked(fake_lock_state(True))
 
-    return check(False), check(True)
+
+@counterexample
+def device_unreachable(tmp: Path) -> tuple[Check, Check]:
+    return check_unlocked(fake_lock_state(False)), check_unlocked(unreachable_lock_state)
+
+
+FAKE_CONSOLE_START = f"""\
+Launched application with com.keraolabs.kerao.probes7 bundle identifier.
+Waiting for the application to terminate\u2026
+Initialized libplacebo v7.387.0 (v7.387.0-15-gc442c617) (API v387)
+{suite.RESULT_PREFIX} validation {suite.VALIDATION}
+[0.001][i] Metal device: Apple A19 GPU, MTLGPUFamilyApple10
+{suite.RESULT_PREFIX} config native Apple10
+[0.000][i] Metal device: Apple A19 GPU, MTLGPUFamilyApple5 (capped)
+"""
+FAKE_CONSOLE_PASSED = f"""{FAKE_CONSOLE_START}\
+{suite.RESULT_PREFIX} config Apple5 Apple5
+{suite.RESULT_PREFIX} end 2
+The app terminated with the exit code 0.
+"""
+
+
+def console_check(console: str, name: str) -> Check:
+    run = suite.parse_metal_output(console)
+    return next(c for c in suite.metal_checks(run) if c.name == f"Metal {name}")
+
+
+@counterexample
+def iphone_run_with_a_failing_test(tmp: Path) -> tuple[Check, Check]:
+    failed = f"{FAKE_CONSOLE_START}The app terminated with the exit code 1.\n"
+    return (
+        console_check(FAKE_CONSOLE_PASSED, "Apple5"),
+        console_check(failed, "Apple5"),
+    )
+
+
+@counterexample
+def iphone_app_killed_mid_run(tmp: Path) -> tuple[Check, Check]:
+    killed = f"{FAKE_CONSOLE_START}App terminated due to signal 9.\n"
+    return (
+        console_check(FAKE_CONSOLE_PASSED, "native"),
+        console_check(killed, "native"),
+    )

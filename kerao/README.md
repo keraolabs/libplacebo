@@ -69,7 +69,7 @@ The test script also runs the Metal test on an iPhone, which needs these steps b
 - A development provisioning profile of that identity's team that holds the identity's certificate and provisions the iPhone, such as one Xcode keeps in `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`. `security cms -D -i <profile>` shows its app ID, devices, certificates and expiry. The runner app takes the profile's app ID as its bundle ID; a wildcard app ID's `*` becomes `kerao-metal-test`. The script refuses an expired profile, one without the identity's certificate and one that does not provision the iPhone. A free personal team's profiles expire after seven days.
 - A free personal team can have three of its apps installed on a device at a time, and a fourth install fails with "maximum number of installed apps using a free developer profile". Remove one of them, or pass the profile of an app that is already installed: installing the runner app replaces any app with the same bundle ID. The FFmpeg fork's runner app is one such app.
 - The first app a team installs on an iPhone launches only after the developer is trusted on the iPhone: Settings › General › VPN & Device Management, then the Apple Development certificate, then Trust.
-- The iPhone unlocked from the start of the script to the end of the run. The script stops before building when it is locked, and the app keeps the screen on while it runs.
+- The iPhone unlocked and reachable, by cable or on the same network, from the start of the script to the end of the run. Before building, the script asks devicectl for its lock state and stops with a failed `device unlocked` check when it is locked or devicectl cannot reach it. The app keeps the screen on while it runs.
 
 ## Usage
 
@@ -173,7 +173,7 @@ The summary has one line per test on this Mac, then the four configurations: `ma
 
 #### Runner app
 
-On iOS, meson builds `src/tests/test.metal.c` as an app executable: the Metal test's code with `src/tests/metal_app.m` in place of the macOS `main`. It starts UIKit with one window, runs the tests on a thread of its own and exits when they return. iOS kills an app without UI about 20 s after launch, as the FFmpeg fork measured, so the runner is a real app that stays in the foreground for as long as the tests take. It does not use XCTest, which cannot run tests without a host app on an iOS device.
+On iOS, meson builds `src/tests/test.metal.c` as an app executable: the Metal test's code with `src/tests/metal_app.m` in place of the macOS `main`. It starts UIKit with one window, runs the tests on a thread of its own and exits when they return. iOS kills an app that shows no UI about 20 s after launch: a variant that idled 40 s in a bare `main` before the tests was killed with signal 9 after 20.8 s, while the same idle in the UIKit app finished with a complete result after 47 s. A run takes about 8 s, and about 22 s on the first launch after the app is installed. It does not use XCTest, which cannot run tests without a host app on an iOS device.
 
 The script checks that program first: built for iOS 17.0, arm64 only, and loading nothing but system libraries, `@rpath/libglslang.dylib` and FFmpeg frameworks. libplacebo's objects are linked into it statically, as in every test program, so the app embeds no `libplacebo.framework`. The script assembles the app without an Xcode project, as the FFmpeg fork does:
 
@@ -181,13 +181,18 @@ The script checks that program first: built for iOS 17.0, arm64 only, and loadin
 - `Frameworks/` holds `libglslang.dylib` and the `ios-arm64` FFmpeg frameworks the program loads, directly or through each other: `libavutil`, `libavcodec` and `libswresample`, which `libavcodec` loads. Each copy is signed with `codesign --sign <identity>`.
 - `Info.plist` has the profile's bundle ID, the iOS slice's minimum OS and device family keys and a scene manifest. The profile is copied in as `embedded.mobileprovision`, and the app is signed with `application-identifier`, `com.apple.developer.team-identifier` and the profile's `get-task-allow` as entitlements.
 
-`xcrun devicectl device install app` installs it, and it stays installed. `xcrun devicectl device process launch --console --terminate-existing` runs it with `DEVICECTL_CHILD_MTL_DEBUG_LAYER=1`, which devicectl passes to the app as `MTL_DEBUG_LAYER=1`. The console output goes to stderr as it arrives, and a run is cut off after 600 s.
+`xcrun devicectl device install app` installs it, and it stays installed. `xcrun devicectl device process launch --console --terminate-existing` runs it with `DEVICECTL_CHILD_MTL_DEBUG_LAYER=1`, which devicectl passes to the app as `MTL_DEBUG_LAYER=1`. devicectl passes on the app's stdout on its own stdout, which the script reads and copies to stderr as it arrives, and the app's stderr on its stderr, which goes straight to stderr. A run is cut off after 120 s.
 
 #### Completion protocol
 
 The iPhone run is judged by the result lines in its console output alone, the same lines and parser as on this Mac; devicectl's exit status is never read. A run without a complete set of lines fails both iOS configurations with `no complete result`: the app crashed, a test failed and exited, iOS or someone killed the app, the run was cut off, or devicectl could not install or launch it, whose error is on stderr.
 
-Result lines and not the exit status, because devicectl does not pass the app's exit status back reliably and an exit status cannot say which configuration failed. The FFmpeg fork measured devicectl 642.16 on the same iPhone 17 (iOS 27.2): when the app exits within a second of launch, devicectl fails with CoreDeviceError 10004 in most runs, once reporting an `abort()` as exit code 0.
+Result lines and not the exit status, because devicectl reports a failure that comes early as success, and an exit status cannot say which configuration failed or show that Validation was on. Measured with devicectl 642.16, Xcode 27.0 and an iPhone 17 on iOS 27.2 (2026-11-02):
+
+- Complete runs, 7 to 22 s long (6 runs): devicectl printed "The app terminated with the exit code 0." and, in the 2 runs whose status was recorded, exited 0.
+- A test made to fail in the Apple5 configuration, about 2 s after launch (3 runs): devicectl printed "The app terminated with the exit code 1." and, in the 2 runs whose status was recorded, exited 1.
+- The app killed with `devicectl device process signal --signal SIGKILL` mid-run (2 runs): devicectl printed "App terminated due to signal 9." and, in the run whose status was recorded, exited 1.
+- Launched without `MTL_DEBUG_LAYER`, so that the test fails its first `REQUIRE` and calls `exit(1)` about half a second after launch (4 runs): devicectl exited 0 and printed "The app terminated with the exit code 0." every time. The FFmpeg fork saw the same for apps that exit within a second of launch: CoreDeviceError 10004 in most runs, and once an `abort()` reported as exit code 0.
 
 ### Self-test
 
