@@ -240,6 +240,7 @@ def build(output: Path, mode: str, ffmpeg_root: Path) -> int:
     simulators = simulator.read_booted_simulators()
     facts = summary_facts(mode, source, toolchain, ffmpeg_input, output)
     checks = [
+        checkout.check_output_outside(source, output),
         *checkout.preconditions(source, mode),
         *ffmpeg.preconditions(ffmpeg_input, mode),
         simulator.check_booted_simulator(simulators),

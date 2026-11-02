@@ -137,6 +137,16 @@ def check_submodules(source: Source) -> Check:
     )
 
 
+def check_output_outside(source: Source, output: Path) -> Check:
+    """output is resolved."""
+    inside = output.is_relative_to(source.root)
+    return Check(
+        "output outside the checkout",
+        not inside,
+        f"{output} is in the checkout {source.root}" if inside else str(output),
+    )
+
+
 def preconditions(source: Source, mode: str) -> list[Check]:
     checks = [check_submodules(source)]
     if mode == "release":
@@ -209,3 +219,12 @@ def submodule_not_initialised(tmp: Path) -> tuple[Check, Check]:
     good = check_submodules(read_source(repo))
     fake_git(repo, "submodule", "--quiet", "deinit", "--force", SUBMODULES[-1])
     return good, check_submodules(read_source(repo))
+
+
+@counterexample
+def output_inside_checkout(tmp: Path) -> tuple[Check, Check]:
+    source = read_source(fake_release_checkout(tmp))
+    return (
+        check_output_outside(source, tmp / "output"),
+        check_output_outside(source, source.root / "output"),
+    )
