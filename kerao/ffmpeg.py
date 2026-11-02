@@ -1,6 +1,7 @@
 import dataclasses
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 from common import (
@@ -12,6 +13,7 @@ from common import (
     counterexample,
     listed,
 )
+from framework import delivered_framework, framework_binary
 
 FFMPEG_TAG = "n9.0.2-kerao.1"
 FFMPEG_COMMIT = "ae49c6ac4a2409553ca0f9a00f9e252cbce632a0"
@@ -95,6 +97,11 @@ def slice_dir(ffmpeg: FFmpeg, slice_: Slice, name: str) -> Path:
     return ffmpeg.root / f"{name}.xcframework" / slice_.identifier
 
 
+def ffmpeg_binary(root: Path, slice_: Slice, name: str) -> Path:
+    """The binary of library name for slice_ that the build links and loads."""
+    return framework_binary(delivered_framework(root, slice_, name), slice_.layout)
+
+
 def compile_args(ffmpeg: FFmpeg, slice_: Slice) -> list[str]:
     """Flags that find FFmpeg's headers and the frameworks libplacebo links."""
     return [
@@ -137,24 +144,60 @@ def check_ffmpeg_mode(ffmpeg: FFmpeg) -> Check:
     )
 
 
+def recorded_binaries(ffmpeg: FFmpeg) -> dict[tuple[str, str], list[dict]]:
+    """The slice entries of FFmpeg's artifact.json by library and slice identifier."""
+    recorded: dict[tuple[str, str], list[dict]] = {}
+    for framework in ffmpeg.record["frameworks"]:
+        for entry in framework["slices"]:
+            key = (framework["name"], entry["identifier"])
+            recorded.setdefault(key, []).append(entry)
+    return recorded
+
+
+def binary_problems(
+    ffmpeg: FFmpeg, slice_: Slice, name: str, entries: list[dict]
+) -> list[str]:
+    """entries are the records of library name in slice_."""
+    binary = ffmpeg_binary(ffmpeg.root, slice_, name)
+    if len(entries) != 1:
+        return [f"{name} {slice_.identifier} has {len(entries)} records, not 1"]
+    path = entries[0]["path"]
+    if ffmpeg.root / path != binary:
+        linked = binary.relative_to(ffmpeg.root)
+        return [f"{name} {slice_.identifier} records {path}, not {linked}"]
+    if not binary.is_file():
+        return [f"no {path}"]
+    if sha256(binary) != entries[0]["sha256"]:
+        return [f"{path} differs from its sha256"]
+    return []
+
+
 def check_ffmpeg_binaries(ffmpeg: FFmpeg) -> Check:
-    """Every binary FFmpeg's artifact.json lists must have its recorded SHA-256."""
-    entries = [
-        entry
-        for framework in ffmpeg.record["frameworks"]
-        for entry in framework["slices"]
+    """FFmpeg's libraries must include LINKED, and its artifact.json must record
+    exactly one binary per library and slice, the one the build links and
+    loads, with its SHA-256, and no other binary."""
+    recorded = recorded_binaries(ffmpeg)
+    expected = [(slice_, name) for name in ffmpeg.libraries for slice_ in SLICES]
+    keys = {(name, slice_.identifier) for slice_, name in expected}
+    problems = [
+        f"libraries has no {name}" for name in LINKED if name not in ffmpeg.libraries
     ]
-    problems = []
-    for entry in entries:
-        binary = ffmpeg.root / entry["path"]
-        if not binary.is_file():
-            problems.append(f"no {entry['path']}")
-        elif sha256(binary) != entry["sha256"]:
-            problems.append(f"{entry['path']} differs from its sha256")
+    problems += [
+        f"{name} {identifier} is not a listed library in a slice of the build"
+        for name, identifier in recorded
+        if (name, identifier) not in keys
+    ]
+    problems += [
+        problem
+        for slice_, name in expected
+        for problem in binary_problems(
+            ffmpeg, slice_, name, recorded.get((name, slice_.identifier), [])
+        )
+    ]
     return Check(
         "FFmpeg binaries",
-        bool(entries) and not problems,
-        listed(problems) or f"{len(entries)} match their sha256",
+        not problems,
+        listed(problems) or f"{len(expected)} match their sha256",
     )
 
 
@@ -181,14 +224,14 @@ def fake_ffmpeg(tmp: Path, **fields: object) -> FFmpeg:
     for name in ("libavutil", "libavcodec", "libswresample"):
         slices = []
         for slice_ in SLICES:
-            path = f"{name}.xcframework/{slice_.identifier}/{name}.framework/{name}"
-            (root / path).parent.mkdir(parents=True)
-            (root / path).write_bytes(f"{name} {slice_.identifier}".encode())
+            binary = ffmpeg_binary(root, slice_, name)
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(f"{name} {slice_.identifier}".encode())
             slices.append(
                 {
                     "identifier": slice_.identifier,
-                    "path": path,
-                    "sha256": sha256(root / path),
+                    "path": str(binary.relative_to(root)),
+                    "sha256": sha256(binary),
                 }
             )
         frameworks.append({"name": name, "slices": slices})
@@ -212,6 +255,10 @@ def fake_ffmpeg(tmp: Path, **fields: object) -> FFmpeg:
     }
     (root / ARTIFACT_JSON).write_text(json.dumps(record))
     return read_ffmpeg(root)
+
+
+def with_fields(ffmpeg: FFmpeg, **fields: object) -> FFmpeg:
+    return dataclasses.replace(ffmpeg, record={**ffmpeg.record, **fields})
 
 
 @counterexample
@@ -261,3 +308,55 @@ def ffmpeg_artifact_without_unverified(tmp: Path) -> tuple[Check, Check]:
     record = fake_ffmpeg(tmp).record
     without = {key: value for key, value in record.items() if key != "unverified"}
     return check_ffmpeg_record(record), check_ffmpeg_record(without)
+
+
+@counterexample
+def ffmpeg_linked_library_unrecorded(tmp: Path) -> tuple[Check, Check]:
+    ffmpeg = fake_ffmpeg(tmp)
+    bad = with_fields(
+        ffmpeg,
+        libraries=[name for name in ffmpeg.libraries if name != LINKED[0]],
+        frameworks=[
+            framework
+            for framework in ffmpeg.record["frameworks"]
+            if framework["name"] != LINKED[0]
+        ],
+    )
+    return check_ffmpeg_binaries(ffmpeg), check_ffmpeg_binaries(bad)
+
+
+@counterexample
+def ffmpeg_slice_unrecorded(tmp: Path) -> tuple[Check, Check]:
+    ffmpeg = fake_ffmpeg(tmp)
+    first, *rest = ffmpeg.record["frameworks"]
+    bad = with_fields(
+        ffmpeg, frameworks=[{**first, "slices": first["slices"][:-1]}, *rest]
+    )
+    return check_ffmpeg_binaries(ffmpeg), check_ffmpeg_binaries(bad)
+
+
+@counterexample
+def ffmpeg_binary_recorded_at_another_path(tmp: Path) -> tuple[Check, Check]:
+    ffmpeg = fake_ffmpeg(tmp)
+    good = check_ffmpeg_binaries(ffmpeg)
+    first, *rest = ffmpeg.record["frameworks"]
+    entry, *others = first["slices"]
+    linked = ffmpeg.root / entry["path"]
+    copy = ffmpeg.root / "verified" / linked.name
+    copy.parent.mkdir()
+    shutil.copy(linked, copy)
+    linked.write_bytes(b"another build")
+    moved = {**entry, "path": str(copy.relative_to(ffmpeg.root))}
+    bad = with_fields(
+        ffmpeg, frameworks=[{**first, "slices": [moved, *others]}, *rest]
+    )
+    return good, check_ffmpeg_binaries(bad)
+
+
+@counterexample
+def ffmpeg_binary_of_an_unlisted_library(tmp: Path) -> tuple[Check, Check]:
+    ffmpeg = fake_ffmpeg(tmp)
+    frameworks = ffmpeg.record["frameworks"]
+    unlisted = {**frameworks[0], "name": "libpostproc"}
+    bad = with_fields(ffmpeg, frameworks=[*frameworks, unlisted])
+    return check_ffmpeg_binaries(ffmpeg), check_ffmpeg_binaries(bad)

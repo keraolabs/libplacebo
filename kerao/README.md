@@ -96,7 +96,7 @@ A `release` build needs HEAD to carry exactly one annotated `v7.387.0-kerao.<n>`
 
 A `dev` build takes any commit and any FFmpeg mode, and its `artifact.json` says `dev`. Its frameworks carry `CFBundleVersion` `0`, and `pl_version()` must equal what `src/version.py` makes of the checkout.
 
-In both modes the FFmpeg output's `artifact.json` must have every field of the delivery contract under [Output](#output), or the script stops with an error. Its `tag` and `commit` must equal the pins in `kerao/ffmpeg.py`, and every binary its `artifact.json` lists must have the recorded SHA-256. That identity goes into `inputs` of the build's own `artifact.json`.
+In both modes the FFmpeg output's `artifact.json` must have every field of the delivery contract under [Output](#output), or the script stops with an error. Its `tag` and `commit` must equal the pins in `kerao/ffmpeg.py`. Its `libraries` must include `libavutil` and `libavcodec`, and its `frameworks` must record exactly one binary for each of those libraries in each of the three slices, at the path the scripts link and load it from, with that binary's SHA-256, and no other binary. That identity goes into `inputs` of the build's own `artifact.json`.
 
 ### Output
 
