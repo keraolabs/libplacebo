@@ -10,7 +10,7 @@ TESTLOG = Path("meson-logs") / "testlog.json"
 PASSED = "OK"
 PROJECT_PREFIX = "libplacebo:"
 METAL_TEST = "metal.c"
-RESULT_PREFIX = "kerao-metal-test"
+RESULT_PREFIX = "metal-test"
 CONFIGURATIONS = ("native", "Apple5")
 VALIDATION = "MTL_DEBUG_LAYER=1"
 

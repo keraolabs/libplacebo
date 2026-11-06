@@ -13,10 +13,10 @@
 #define MAX_TEX_3D_DIM          2048
 #define MAX_SET_BYTES           4096
 
-// kerao/test.py reads these lines: `validation MTL_DEBUG_LAYER=<value>` first,
-// one `config <name> Apple<family>` for each configuration whose tests all
-// passed, then `end <configurations>` last
-#define RESULT_PREFIX "kerao-metal-test"
+// Prefix of every result line and of no other: `validation
+// MTL_DEBUG_LAYER=<value>` first, one `config <name> Apple<family>` for each
+// configuration whose tests all passed, then `end <configurations>` last
+#define RESULT_PREFIX "metal-test"
 
 // Capabilities the feature set tables give a device configuration
 struct expected {
