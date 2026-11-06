@@ -1,6 +1,7 @@
 import dataclasses
 import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from framework import delivered_framework, framework_binary
 
 FFMPEG_TAG = "n9.0.2-kerao.1"
 FFMPEG_COMMIT = "ae49c6ac4a2409553ca0f9a00f9e252cbce632a0"
+KERAO_INFIX = "-kerao."
+DEV_IDENTITY_SUFFIX = r"-kerao\.[0-9]+-dev\.[0-9]+"
 LINKED = ("libavutil", "libavcodec")
 ARTIFACT_JSON = "artifact.json"
 RECORD_SHAPE = {
@@ -117,22 +120,37 @@ def rpath_args(ffmpeg: FFmpeg, slice_: Slice) -> list[str]:
     ]
 
 
-def check_ffmpeg_tag(ffmpeg: FFmpeg) -> Check:
+def is_dev_identity(tag: str) -> bool:
+    """Whether tag is <upstream>-kerao.<n>-dev.<m> of the pinned tag's upstream version,
+    a local tag that is never pushed."""
+    upstream = FFMPEG_TAG.split(KERAO_INFIX)[0]
+    return re.fullmatch(re.escape(upstream) + DEV_IDENTITY_SUFFIX, tag) is not None
+
+
+def check_ffmpeg_tag(ffmpeg: FFmpeg, mode: str) -> Check:
+    """A release build takes only the pinned tag; a dev build also a dev identity."""
     tag = ffmpeg.record["tag"]
-    return Check(
-        "FFmpeg tag",
-        tag == FFMPEG_TAG,
-        tag if tag == FFMPEG_TAG else f"{tag}, pinned {FFMPEG_TAG}",
+    if tag == FFMPEG_TAG:
+        return Check("FFmpeg tag", True, tag)
+    if mode == "dev" and is_dev_identity(tag):
+        return Check("FFmpeg tag", True, f"{tag}, a dev identity")
+    accepted = (
+        f"pinned {FFMPEG_TAG}"
+        if mode == "release"
+        else f"pinned {FFMPEG_TAG} or a dev identity "
+        f"<{FFMPEG_TAG.split(KERAO_INFIX)[0]}-kerao.<n>-dev.<m>>"
     )
+    return Check("FFmpeg tag", False, f"{tag}, {accepted}")
 
 
-def check_ffmpeg_commit(ffmpeg: FFmpeg) -> Check:
+def check_ffmpeg_commit(ffmpeg: FFmpeg, mode: str) -> Check:
+    """The pinned commit; a dev identity's commit is its own, so a dev build takes it."""
     commit = ffmpeg.record["commit"]
-    return Check(
-        "FFmpeg commit",
-        commit == FFMPEG_COMMIT,
-        commit if commit == FFMPEG_COMMIT else f"{commit}, pinned {FFMPEG_COMMIT}",
-    )
+    if commit == FFMPEG_COMMIT:
+        return Check("FFmpeg commit", True, commit)
+    if mode == "dev" and is_dev_identity(ffmpeg.record["tag"]):
+        return Check("FFmpeg commit", True, f"{commit}, of {ffmpeg.record['tag']}")
+    return Check("FFmpeg commit", False, f"{commit}, pinned {FFMPEG_COMMIT}")
 
 
 def check_ffmpeg_mode(ffmpeg: FFmpeg) -> Check:
@@ -203,8 +221,8 @@ def check_ffmpeg_binaries(ffmpeg: FFmpeg) -> Check:
 
 def preconditions(ffmpeg: FFmpeg, mode: str) -> list[Check]:
     checks = [
-        check_ffmpeg_tag(ffmpeg),
-        check_ffmpeg_commit(ffmpeg),
+        check_ffmpeg_tag(ffmpeg, mode),
+        check_ffmpeg_commit(ffmpeg, mode),
         check_ffmpeg_binaries(ffmpeg),
     ]
     if mode == "release":
@@ -264,16 +282,86 @@ def with_fields(ffmpeg: FFmpeg, **fields: object) -> FFmpeg:
 @counterexample
 def ffmpeg_artifact_of_another_tag(tmp: Path) -> tuple[Check, Check]:
     return (
-        check_ffmpeg_tag(fake_ffmpeg(tmp / "good")),
-        check_ffmpeg_tag(fake_ffmpeg(tmp / "bad", tag="n9.0.2-7-g3f1da3281d")),
+        check_ffmpeg_tag(fake_ffmpeg(tmp / "good"), "release"),
+        check_ffmpeg_tag(
+            fake_ffmpeg(tmp / "bad", tag="n9.0.2-7-g3f1da3281d"), "dev"
+        ),
     )
 
 
 @counterexample
 def ffmpeg_artifact_of_another_commit(tmp: Path) -> tuple[Check, Check]:
     return (
-        check_ffmpeg_commit(fake_ffmpeg(tmp / "good")),
-        check_ffmpeg_commit(fake_ffmpeg(tmp / "bad", commit="0" * 40)),
+        check_ffmpeg_commit(fake_ffmpeg(tmp / "good"), "release"),
+        check_ffmpeg_commit(fake_ffmpeg(tmp / "bad", commit="0" * 40), "dev"),
+    )
+
+
+UPSTREAM = FFMPEG_TAG.split("-kerao.")[0]
+DEV_IDENTITY = f"{UPSTREAM}-kerao.9-dev.3"
+DEV_COMMIT = "1" * 40
+
+
+def first_passing(checks: list[Check]) -> Check:
+    """The first check that passes, or the first one when none does."""
+    return next((check for check in checks if check.ok), checks[0])
+
+
+def all_of(checks: list[Check]) -> Check:
+    """The first check that fails, or the first one when none does."""
+    return next((check for check in checks if not check.ok), checks[0])
+
+
+@counterexample
+def ffmpeg_artifact_of_an_unpinned_release(tmp: Path) -> tuple[Check, Check]:
+    return (
+        check_ffmpeg_tag(fake_ffmpeg(tmp / "good", tag=DEV_IDENTITY), "dev"),
+        check_ffmpeg_tag(fake_ffmpeg(tmp / "bad", tag=f"{UPSTREAM}-kerao.9"), "dev"),
+    )
+
+
+@counterexample
+def ffmpeg_dev_identity_of_another_upstream(tmp: Path) -> tuple[Check, Check]:
+    return (
+        check_ffmpeg_tag(fake_ffmpeg(tmp / "good", tag=DEV_IDENTITY), "dev"),
+        check_ffmpeg_tag(fake_ffmpeg(tmp / "bad", tag="n8.1-kerao.9-dev.3"), "dev"),
+    )
+
+
+@counterexample
+def ffmpeg_dev_identity_malformed(tmp: Path) -> tuple[Check, Check]:
+    malformed = (
+        f"{UPSTREAM}-kerao.9-dev",
+        f"{UPSTREAM}-kerao.9-dev.x",
+        f"{UPSTREAM}-kerao.9-rc.1",
+    )
+    return (
+        check_ffmpeg_tag(fake_ffmpeg(tmp / "good", tag=DEV_IDENTITY), "dev"),
+        first_passing(
+            [
+                check_ffmpeg_tag(fake_ffmpeg(tmp / f"bad-{index}", tag=tag), "dev")
+                for index, tag in enumerate(malformed)
+            ]
+        ),
+    )
+
+
+@counterexample
+def ffmpeg_dev_identity_in_a_release_build(tmp: Path) -> tuple[Check, Check]:
+    dev = fake_ffmpeg(tmp, tag=DEV_IDENTITY, commit=DEV_COMMIT)
+    return (
+        all_of([check_ffmpeg_tag(dev, "dev"), check_ffmpeg_commit(dev, "dev")]),
+        check_ffmpeg_tag(dev, "release"),
+    )
+
+
+@counterexample
+def ffmpeg_commit_of_a_pinned_tag_differs(tmp: Path) -> tuple[Check, Check]:
+    return (
+        check_ffmpeg_commit(
+            fake_ffmpeg(tmp / "good", tag=DEV_IDENTITY, commit=DEV_COMMIT), "dev"
+        ),
+        check_ffmpeg_commit(fake_ffmpeg(tmp / "bad", commit=DEV_COMMIT), "dev"),
     )
 
 
