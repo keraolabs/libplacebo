@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 
-from common import BuildError, Check, capture, counterexample, listed
+from common import BuildError, Check, capture, counterexample, listed, output
 
 UPSTREAM_TAG = "v7.387.0"
 UPSTREAM_VERSION = UPSTREAM_TAG.removeprefix("v")
@@ -15,6 +15,9 @@ SUBMODULES = (
     "3rdparty/jinja",
     "3rdparty/markupsafe",
 )
+FORK_PATHS = ("kerao/", "AGENTS.md")
+FORK_NAME = re.compile(b"kerao", re.IGNORECASE)
+UPSTREAM_TREE_CHECK = "no kerao outside kerao/ and AGENTS.md"
 SUBMODULE_STATUS = re.compile(r"(?P<state>[-+U ]?)[0-9a-f]+ (?P<path>\S+)(?: .*)?")
 SUBMODULE_AT_RECORDED_COMMIT = " "
 
@@ -137,6 +140,32 @@ def check_submodules(source: Source) -> Check:
     )
 
 
+def tracked_content(path: Path) -> bytes:
+    """What git tracks of path: a symbolic link's target, a file's bytes, or
+    nothing for a directory such as a submodule."""
+    if path.is_symlink():
+        return os.fsencode(os.readlink(path))
+    return path.read_bytes() if path.is_file() else b""
+
+
+def fork_mentions(root: Path) -> list[str]:
+    """Every file git tracks in root outside FORK_PATHS whose path or content
+    holds kerao in any case."""
+    paths = output(["git", "-C", str(root), "ls-files", "-z", "--", ".",
+                    *(f":(exclude){path}" for path in FORK_PATHS)])
+    return [
+        os.fsdecode(path)
+        for path in paths.split(b"\0")
+        if path
+        and (FORK_NAME.search(path) or FORK_NAME.search(tracked_content(root / os.fsdecode(path))))
+    ]
+
+
+def check_upstream_tree(root: Path) -> Check:
+    found = fork_mentions(root)
+    return Check(UPSTREAM_TREE_CHECK, not found, listed(found))
+
+
 def check_output_outside(source: Source, output: Path) -> Check:
     """output is resolved."""
     inside = output.is_relative_to(source.root)
@@ -148,7 +177,7 @@ def check_output_outside(source: Source, output: Path) -> Check:
 
 
 def preconditions(source: Source, mode: str) -> list[Check]:
-    checks = [check_submodules(source)]
+    checks = [check_submodules(source), check_upstream_tree(source.root)]
     if mode == "release":
         checks += [check_release_tag(source), check_clean_worktree(source)]
     return checks
@@ -228,3 +257,65 @@ def output_inside_checkout(tmp: Path) -> tuple[Check, Check]:
         check_output_outside(source, tmp / "output"),
         check_output_outside(source, source.root / "output"),
     )
+
+
+def fake_fork_checkout(tmp: Path) -> Path:
+    """A repository with an upstream file, and the fork's kerao/ and AGENTS.md,
+    which name it."""
+    repo = tmp / "checkout"
+    repo.mkdir()
+    fake_git(repo, "init", "-q")
+    (repo / "meson.build").write_text("project('libplacebo')\n")
+    (repo / "kerao").mkdir()
+    (repo / "kerao" / "build.py").write_text("# builds the kerao libraries\n")
+    (repo / "AGENTS.md").write_text("Kerao's fork of libplacebo.\n")
+    fake_git(repo, "add", "meson.build", "kerao", "AGENTS.md")
+    fake_git(repo, "commit", "-q", "-m", "fork")
+    return repo
+
+
+@counterexample
+def kerao_in_upstream_file(tmp: Path) -> tuple[Check, Check]:
+    repo = fake_fork_checkout(tmp)
+    good = check_upstream_tree(repo)
+    (repo / "metal.c").write_text('#define RESULT_PREFIX "Kerao-metal-test"\n')
+    fake_git(repo, "add", "metal.c")
+    return good, check_upstream_tree(repo)
+
+
+@counterexample
+def symlink_into_kerao(tmp: Path) -> tuple[Check, Check]:
+    repo = fake_fork_checkout(tmp)
+    good = check_upstream_tree(repo)
+    (repo / "kerao" / "generated.h").write_text("int bridge(void);\n")
+    (repo / "bridge.h").symlink_to("kerao/generated.h")
+    fake_git(repo, "add", "bridge.h", "kerao")
+    return good, check_upstream_tree(repo)
+
+
+@counterexample
+def dangling_symlink_naming_kerao(tmp: Path) -> tuple[Check, Check]:
+    repo = fake_fork_checkout(tmp)
+    good = check_upstream_tree(repo)
+    (repo / "missing.h").symlink_to("../Kerao/missing.h")
+    fake_git(repo, "add", "missing.h")
+    return good, check_upstream_tree(repo)
+
+
+@counterexample
+def kerao_in_file_named_with_leading_space(tmp: Path) -> tuple[Check, Check]:
+    repo = fake_fork_checkout(tmp)
+    good = check_upstream_tree(repo)
+    (repo / " bridge.h").write_text("int Kerao_bridge(void);\n")
+    fake_git(repo, "add", " bridge.h")
+    return good, check_upstream_tree(repo)
+
+
+@counterexample
+def kerao_in_upstream_path(tmp: Path) -> tuple[Check, Check]:
+    repo = fake_fork_checkout(tmp)
+    good = check_upstream_tree(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "KERAO.h").write_text("\n")
+    fake_git(repo, "add", "src")
+    return good, check_upstream_tree(repo)

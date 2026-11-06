@@ -165,13 +165,13 @@ def listed(items: list[str]) -> str:
     return "; ".join(items[:MAX_LISTED_LINES]) + (f"; {more} more" if more > 0 else "")
 
 
-def capture(
+def output(
     command: list[str],
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     timeout_seconds: float | None = None,
-) -> str:
-    """command's stdout; raises BuildError when it fails or outlasts timeout_seconds."""
+) -> bytes:
+    """command's stdout byte for byte; raises BuildError when it fails or outlasts timeout_seconds."""
     try:
         result = subprocess.run(
             command,
@@ -179,7 +179,6 @@ def capture(
             cwd=cwd,
             env=env,
             capture_output=True,
-            text=True,
             timeout=timeout_seconds,
         )
     except FileNotFoundError as error:
@@ -187,8 +186,18 @@ def capture(
     except subprocess.TimeoutExpired as error:
         raise BuildError(f"{' '.join(command)} ran past {timeout_seconds} s") from error
     if result.returncode != 0:
-        raise BuildError(f"{' '.join(command)} failed: {result.stderr.strip()}")
-    return result.stdout.strip()
+        raise BuildError(f"{' '.join(command)} failed: {result.stderr.decode(errors='replace').strip()}")
+    return result.stdout
+
+
+def capture(
+    command: list[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    timeout_seconds: float | None = None,
+) -> str:
+    """command's stdout as text without the whitespace around it; raises BuildError when it fails or outlasts timeout_seconds."""
+    return output(command, cwd, env, timeout_seconds).decode().replace("\r\n", "\n").strip()
 
 
 def stream(

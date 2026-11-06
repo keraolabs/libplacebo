@@ -96,6 +96,8 @@ A `release` build needs HEAD to carry exactly one annotated `v7.387.0-kerao.<n>`
 
 A `dev` build takes any commit and any FFmpeg mode, and its `artifact.json` says `dev`. Its frameworks carry `CFBundleVersion` `0`, and `pl_version()` must equal what `src/version.py` makes of the checkout.
 
+Neither mode builds a checkout with `kerao`, in any case, in the path or content of a file git tracks outside `kerao/` and `AGENTS.md`: the source the fork shares with upstream carries no fork name.
+
 In both modes the FFmpeg output's `artifact.json` must have every field of the delivery contract under [Output](#output), or the script stops with an error. Its `tag` and `commit` must equal the pins in `kerao/ffmpeg.py`, except that a `dev` build and the test script also take a dev identity with its own commit: a tag `<upstream>-kerao.<n>-dev.<m>` of the pinned tag's upstream version, such as `n9.0.2-kerao.2-dev.1`, which marks a dev commit of the FFmpeg fork and is never pushed. A `release` build takes only the pins. Its `libraries` must include `libavutil` and `libavcodec`, and its `frameworks` must record exactly one binary for each of those libraries in each of the three slices, at the path the scripts link and load it from, with that binary's SHA-256, and no other binary. That identity goes into `inputs` of the build's own `artifact.json`.
 
 ### Output
@@ -198,7 +200,7 @@ Result lines and not the exit status, because devicectl reports a failure that c
 
 `--self-test` runs each check against counterexamples without building anything. Every counterexample gives a check an input it must pass and a broken copy it must fail, such as a framework with a second `LC_RPATH`, an altered install name, a library missing a `PL_LIBAV_API` export, an `Info.plist` with another version, or a `config.h` that differs in one slice. It needs Xcode, CMake and ninja, but no network or Simulator, and takes a few seconds.
 
-A check is a `check_*` function in `kerao/`, and the self-test also fails when no counterexample calls one. A new check therefore comes with a counterexample registered through `@counterexample`.
+A check is a `check_*` function in `kerao/`, and the self-test also fails when no counterexample calls one. A new check therefore comes with a counterexample registered through `@counterexample`. The self-test then runs the check for `kerao` outside `kerao/` and `AGENTS.md` on this checkout, and fails when it does.
 
 ### Dependencies
 

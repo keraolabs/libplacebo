@@ -359,7 +359,9 @@ def self_test() -> int:
     for name in uncovered:
         print(f"FAIL  {name}  no counterexample calls it")
     print(f"{total - len(uncovered)} of {total} checks have a counterexample")
-    return 0 if caught == len(COUNTEREXAMPLES) and not uncovered else 1
+    tree = checkout.check_upstream_tree(ROOT)
+    print(f"{'pass' if tree.ok else 'FAIL'}  this checkout: {tree.name}  {tree.detail}")
+    return 0 if caught == len(COUNTEREXAMPLES) and not uncovered and tree.ok else 1
 
 
 def main() -> int:
