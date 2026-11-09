@@ -60,7 +60,7 @@ The fork has no CI: the Metal device of GitHub-hosted macOS runners is "Apple Pa
   Without them meson would take Jinja from the host or build without fast_float, so both scripts refuse to start.
 - A booted iOS Simulator running iOS 17.0 or newer, for the build's consumer program. `xcrun simctl list devices available` lists them and `xcrun simctl boot <udid>` boots one. Without one the build stops before it starts; the test script does not need it.
 - Network access to the two repositories under [Dependencies](#dependencies).
-- The output directory of the FFmpeg fork's `kerao/build.py` for the pinned FFmpeg tag, `n9.0.2-kerao.1` (commit `ae49c6ac4a2409553ca0f9a00f9e252cbce632a0`), or in a `dev` build for a dev identity of the same upstream version, see [Modes](#modes). The scripts link against it and never build FFmpeg themselves.
+- The output directory of the FFmpeg fork's `kerao/build.py` for the pinned FFmpeg tag, `n9.0.2-kerao.2` (commit `15b2eda1d7166d373246a2b7cba6c43b419ade9f`), or in a `dev` build for a dev identity of the same upstream version, see [Modes](#modes). The scripts link against it and never build FFmpeg themselves.
 
 The test script also runs the Metal test on an iPhone, which needs these steps by hand:
 

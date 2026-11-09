@@ -16,8 +16,8 @@ from common import (
 )
 from framework import delivered_framework, framework_binary
 
-FFMPEG_TAG = "n9.0.2-kerao.1"
-FFMPEG_COMMIT = "ae49c6ac4a2409553ca0f9a00f9e252cbce632a0"
+FFMPEG_TAG = "n9.0.2-kerao.2"
+FFMPEG_COMMIT = "15b2eda1d7166d373246a2b7cba6c43b419ade9f"
 KERAO_INFIX = "-kerao."
 DEV_IDENTITY_SUFFIX = r"-kerao\.[0-9]+-dev\.[0-9]+"
 LINKED = ("libavutil", "libavcodec")
