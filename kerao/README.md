@@ -60,7 +60,7 @@ The fork has no CI: the Metal device of GitHub-hosted macOS runners is "Apple Pa
   Without them meson would take Jinja from the host or build without fast_float, so both scripts refuse to start.
 - A booted iOS Simulator running iOS 17.0 or newer, for the build's consumer program. `xcrun simctl list devices available` lists them and `xcrun simctl boot <udid>` boots one. Without one the build stops before it starts; the test script does not need it.
 - Network access to the two repositories under [Dependencies](#dependencies).
-- The output directory of the FFmpeg fork's `kerao/build.py` for the pinned FFmpeg tag, `n9.0.2-kerao.2` (commit `15b2eda1d7166d373246a2b7cba6c43b419ade9f`), or in a `dev` build for a dev identity of the same upstream version, see [Modes](#modes). The scripts link against it and never build FFmpeg themselves.
+- The output directory of the FFmpeg fork's `kerao/build.py` for the pinned FFmpeg tag, `n9.1-kerao.1` (commit `2b477191ec2c2107dd0995336b44a81f442c9596`), or in a `dev` build for a dev identity of the same upstream version, see [Modes](#modes). The scripts link against it and never build FFmpeg themselves.
 
 The test script also runs the Metal test on an iPhone, which needs these steps by hand:
 
@@ -98,7 +98,7 @@ A `dev` build takes any commit and any FFmpeg mode, and its `artifact.json` says
 
 Neither mode builds a checkout with `kerao`, in any case, in the path or content of a file git tracks outside `kerao/` and `AGENTS.md`: the source the fork shares with upstream carries no fork name.
 
-In both modes the FFmpeg output's `artifact.json` must have every field of the delivery contract under [Output](#output), or the script stops with an error. Its `tag` and `commit` must equal the pins in `kerao/ffmpeg.py`, except that a `dev` build and the test script also take a dev identity with its own commit: a tag `<upstream>-kerao.<n>-dev.<m>` of the pinned tag's upstream version, such as `n9.0.2-kerao.2-dev.1`, which marks a dev commit of the FFmpeg fork and is never pushed. A `release` build takes only the pins. Its `libraries` must include `libavutil` and `libavcodec`, and its `frameworks` must record exactly one binary for each of those libraries in each of the three slices, at the path the scripts link and load it from, with that binary's SHA-256, and no other binary. That identity goes into `inputs` of the build's own `artifact.json`.
+In both modes the FFmpeg output's `artifact.json` must have every field of the delivery contract under [Output](#output), or the script stops with an error. Its `tag` and `commit` must equal the pins in `kerao/ffmpeg.py`, except that a `dev` build and the test script also take a dev identity with its own commit: a tag `<upstream>-kerao.<n>-dev.<m>` of the pinned tag's upstream version, such as `n9.1-kerao.1-dev.1`, which marks a dev commit of the FFmpeg fork and is never pushed. A `release` build takes only the pins. Its `libraries` must include `libavutil` and `libavcodec`, and its `frameworks` must record exactly one binary for each of those libraries in each of the three slices, at the path the scripts link and load it from, with that binary's SHA-256, and no other binary. That identity goes into `inputs` of the build's own `artifact.json`.
 
 ### Output
 
